@@ -1,6 +1,7 @@
 package com.cizeylem.bir.internal
 
 import android.content.Context
+import android.database.DatabaseErrorHandler
 import android.database.sqlite.SQLiteDatabase
 import java.io.File
 import java.io.FileInputStream
@@ -27,14 +28,25 @@ internal object AmplitudeTakeover {
         "00000000-0000-0000-0000-000000000000",
     )
 
-    private fun valid(raw: String?): String? {
+    private fun valid(raw: String?, legacy: Boolean = false): String? {
         val v = raw?.trim() ?: return null
         if (v.lowercase() in INVALID) return null
         // Sonu "S" ile biten kimlikleri eski Amplitude-Android kendisi kullanmayıp yeniden üretir;
         // Amplitude'un terk ettiği kimliği diriltmek cihaz düzeyindeki parity eşleşmesini bozar.
-        if (v.endsWith("S")) return null
+        // Kural yalnız eski Android kaynaklarına (sqlite/prefs) uygulanır: Kotlin kaynağı ve özellikle
+        // `configured` host uygulamanın bilinçli verdiği kimliktir; "S" ile bitse de atılmamalı.
+        if (legacy && v.endsWith("S")) return null
         return v
     }
+
+    /**
+     * SQLite başlığının 18-19. baytları (yazma/okuma sürümü) 2 ise DB WAL modundadır. READONLY açılış bile
+     * `-shm` yan dosyası yaratır ve kapanırken silemez; başkasının veri dizinine iz bırakmamak için o kaynak atlanır.
+     */
+    private fun isWal(f: File): Boolean = try {
+        val h = ByteArray(20)
+        FileInputStream(f).use { var n = 0; while (n < 20) { val r = it.read(h, n, 20 - n); if (r < 0) break; n += r }; n < 20 || h[18].toInt() == 2 || h[19].toInt() == 2 }
+    } catch (e: Exception) { true }
 
     fun find(context: Context, configured: String?): Takeover? {
         valid(configured)?.let { return Takeover(it, "configured", false) }
@@ -73,12 +85,13 @@ internal object AmplitudeTakeover {
     } catch (e: Exception) { null }
 
     private fun readDb(f: File): Takeover? {
-        if (!f.isFile) return null
+        if (!f.isFile || isWal(f)) return null
         var db: SQLiteDatabase? = null
         return try {
             // READONLY: Amplitude'un veritabanına yazma/şema değişikliği yolu kapalı kalır.
-            db = SQLiteDatabase.openDatabase(f.path, null, SQLiteDatabase.OPEN_READONLY)
-            val id = valid(db.queryString("store", "device_id")) ?: return null
+            // Boş DatabaseErrorHandler şart: varsayılanı bozuk bulduğu DB dosyasını (ve yan dosyalarını) SİLER.
+            db = SQLiteDatabase.openDatabase(f.path, null, SQLiteDatabase.OPEN_READONLY, DatabaseErrorHandler { })
+            val id = valid(db.queryString("store", "device_id"), legacy = true) ?: return null
             // opt_out store'da değil long_store'da (INTEGER 1/0); tablo/satır yoksa false.
             val opt = try { db.queryString("long_store", "opt_out") == "1" } catch (e: Exception) { false }
             Takeover(id, "amplitude-sqlite", opt)
@@ -97,7 +110,7 @@ internal object AmplitudeTakeover {
         // Dosya yokken getSharedPreferences çağırmayız: yoksa boş bir XML/iz bırakabilir.
         if (!File(dataDir, "shared_prefs/$name.xml").isFile) null else {
             val p = context.getSharedPreferences(name, Context.MODE_PRIVATE)
-            valid(p.getString("com.amplitude.api.deviceId", null))?.let {
+            valid(p.getString("com.amplitude.api.deviceId", null), legacy = true)?.let {
                 Takeover(it, "amplitude-prefs", p.getBoolean("com.amplitude.api.optOut", false))
             }
         }

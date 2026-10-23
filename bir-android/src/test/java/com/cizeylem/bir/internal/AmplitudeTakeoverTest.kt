@@ -92,13 +92,65 @@ class AmplitudeTakeoverTest {
             "", "9774d56d682e549c", "unknown", "000000000000000", "Android", "DEFACE",
             "00000000-0000-0000-0000-000000000000",
             "9774D56D682E549C", "UNKNOWN", "android", "deface", // büyük/küçük harf duyarsız
-            "${a}S", // Amplitude-Android'in kendi ürettiği/terk ettiği "S" sonekli kimlik
         )
         for (v in bad) {
             File(dataDir, "app_amplitude").deleteRecursively()
             identity("\$default_instance", "device_id=$v")
             prefs(a)
             assertEquals("değer: '$v'", Takeover(a, "amplitude-prefs", false), AmplitudeTakeover.find(ctx, null))
+        }
+    }
+
+    @Test fun `S soneki eski kaynaklarda elenir, configured ve kotlinde korunur`() {
+        legacyDb(deviceId = "${a}S")
+        prefs(b)
+        assertEquals(Takeover(b, "amplitude-prefs", false), AmplitudeTakeover.find(ctx, null))
+        prefs("${a}S")
+        assertNull(AmplitudeTakeover.find(ctx, null))
+        assertEquals(Takeover("${a}S", "configured", false), AmplitudeTakeover.find(ctx, "${a}S"))
+        identity("\$default_instance", "device_id=${a}S")
+        assertEquals(Takeover("${a}S", "amplitude-kotlin", false), AmplitudeTakeover.find(ctx, null))
+    }
+
+    @Test fun `adlandirilmis instance SQLite dosyasi taranir`() {
+        legacyDb(name = "com.amplitude.api_ornek", deviceId = a, optOut = 1)
+        assertEquals(Takeover(a, "amplitude-sqlite", true), AmplitudeTakeover.find(ctx, null))
+    }
+
+    @Test fun `bozuk SQLite dosyasi silinmez, baytlari ve mtime ayni kalir`() {
+        for (name in listOf("com.amplitude.api", "com.amplitude.api_ornek")) {
+            val f = File(dataDir, "databases/$name")
+            f.parentFile!!.mkdirs()
+            // Geçerli sihirli başlık + çöp gövde: SQLite açılışta/sorguda "corrupt" der (varsayılan handler burada dosyayı silerdi).
+            val magic = "SQLite format 3\u0000".toByteArray(Charsets.ISO_8859_1)
+            f.writeBytes(ByteArray(4096) { if (it < magic.size) magic[it] else if (it in 18..19) 1 else (it * 7 + 3).toByte() })
+            val before = sha(f)
+            val t = f.lastModified()
+            prefs(a)
+            assertEquals("amplitude-prefs", AmplitudeTakeover.find(ctx, null)?.source)
+            assertTrue("$name silindi", f.exists())
+            assertEquals(before, sha(f))
+            assertEquals(t, f.lastModified())
+            f.delete()
+        }
+    }
+
+    @Test fun `WAL modundaki DB atlanir ve yan dosya olusmaz`() {
+        for (name in listOf("com.amplitude.api", "com.amplitude.api_ornek")) {
+            val f = legacyDb(name = name, deviceId = b, optOut = 1)
+            SQLiteDatabase.openDatabase(f.path, null, SQLiteDatabase.OPEN_READWRITE).use { it.rawQuery("PRAGMA journal_mode=WAL", null).use { c -> c.moveToFirst() } }
+            File(f.parentFile, "$name-wal").delete(); File(f.parentFile, "$name-shm").delete()
+            assertEquals(2, f.readBytes()[18].toInt())
+            val before = sha(f)
+            val t = f.lastModified()
+            prefs(a)
+            assertEquals(Takeover(a, "amplitude-prefs", false), AmplitudeTakeover.find(ctx, null))
+            assertFalse(File(f.parentFile, "$name-shm").exists())
+            assertFalse(File(f.parentFile, "$name-wal").exists())
+            assertFalse(File(f.parentFile, "$name-journal").exists())
+            assertEquals(before, sha(f))
+            assertEquals(t, f.lastModified())
+            f.delete()
         }
     }
 
