@@ -59,6 +59,7 @@ internal class Core(
     private var dir: File? = null
     private var noBackupDir: File? = null
     private var consentStore: ConsentStore? = null
+    private var consentFile: File? = null
     private var deviceIdStore: DeviceIdStore? = null
     private var sessionStore: SessionStore? = null
     private var queue: EventQueue? = null
@@ -67,6 +68,10 @@ internal class Core(
     private var consent = Consent()
     private var deviceId: String? = null
     private var userId: String? = null
+
+    // Kimlik üretilemediği için (erişilemez depo) düşen event'ler: stats()'ta görünür olsunlar,
+    // yoksa SDK "çalışıyor" görünürken hiçbir şey toplamadığını kimse fark etmez.
+    private var droppedNoIdentity = 0
 
     private var pendingSet: LinkedHashMap<String, Any?>? = null
     private var pendingSetOnce: LinkedHashMap<String, Any?>? = null
@@ -164,10 +169,10 @@ internal class Core(
         val time = now()
         scheduler.post {
             if (!ready()) return@post
-            val ops = takePending(null)
-            // Gönderecek bir şey yoksa boş $identify üretmeyiz.
-            if (ops == null && userId == null) return@post
-            write(IDENTIFY, time, uuid(), null, ops, userId)
+            // Gönderecek bir şey yoksa boş $identify üretmeyiz. Bekleyenler burada TÜKETİLMEZ:
+            // tüketme, event'in kuyruğa gerçekten yazılacağı yere (write) bırakılır.
+            if (!hasPending() && userId == null) return@post
+            write(IDENTIFY, time, uuid(), null, null, userId)
         }
     }
 
@@ -243,7 +248,9 @@ internal class Core(
         val d = File(base, DIR_NAME)
         dir = d
         // Yalnız okuma: dizin yaratılmaz, rıza yokken diskte iz bırakılmaz.
-        val store = ConsentStore(File(d, "consent"))
+        val f = File(d, "consent")
+        consentFile = f
+        val store = ConsentStore(f)
         consentStore = store
         consent = store.read()
         if (consent.analytics) enableAnalytics()
@@ -280,6 +287,11 @@ internal class Core(
             }
         }
         deviceId = id ?: ids.getOrCreate()
+        if (deviceId == null) {
+            // Direct Boot / kilitli kullanıcıda noBackupFilesDir okunamaz. Kurulumu yarıda bırakmıyoruz:
+            // depo erişilebilir hale gelince ilk event kimliği kendisi üretir (bkz. ensureDeviceId).
+            warn("cihaz kimliği üretilemedi (depo erişilemez); kimlik sonraki event'te yeniden denenecek")
+        }
         userId = readUserId()
         distinctIdCache = userId ?: deviceId
 
@@ -290,10 +302,19 @@ internal class Core(
         // Backoff monotonik saatle, `sent_at` duvar saatiyle: ikisi aynı kaynaktan gelemez.
         dispatcher = Dispatcher(q, send, elapsed, random, wallClock = now, warn = ::warn)
         contextProvider = ContextProvider(app, LIB_VERSION)
-        if (migratedFrom != null) {
-            // Devralma izi: panelde "Amplitude'dan gelen kullanıcı" kırılımı (SPEC §6).
-            pendingSetOnce = merge(pendingSetOnce, linkedMapOf<String, Any?>("migrated_from" to migratedFrom))
+        val once = LinkedHashMap<String, Any?>()
+        // Devralma izi: panelde "Amplitude'dan gelen kullanıcı" kırılımı (SPEC §6).
+        migratedFrom?.let { once["migrated_from"] = it }
+        if (takeover != null && takeover.optOut) {
+            // SPEC §6 "Amplitude'un optOut değeri korunur": koruma mekanizması rızanın VARSAYILAN KAPALI
+            // olmasıdır — Amplitude'da çıkmış kullanıcı, uygulama açıkça setConsent(analytics = true)
+            // demedikçe hiçbir şey göndermez. Buraya ancak o açık çağrıyla gelinir ve TAZE RIZA eski
+            // üçüncü taraf bayrağını ezer (kullanıcı yeni rıza ekranında bilerek onay verdi). Bayrağın
+            // kendisi kaybolmasın diye kullanıcı özelliğine yazılır ve duyurulur.
+            warn("Amplitude kaydı opt-out; açık rıza üstün geldi, migrated_opt_out işaretlendi")
+            once["migrated_opt_out"] = true
         }
+        if (once.isNotEmpty()) pendingSetOnce = merge(pendingSetOnce, once)
 
         // Tracker YALNIZ rızayla kurulur: durum dosyası (son görülen sürüm) rızasız kalıcı bir iz olurdu.
         val existingInstall = migratedFrom != null || (takeover != null && own == null)
@@ -332,8 +353,21 @@ internal class Core(
             store.write(next)
         } catch (e: IOException) {
             warn("rıza kaydı yazılamadı: $e")
+            // Kapatma yazılamazsa diskte hâlâ "analytics=1" kalır ve BİR SONRAKİ SÜREÇ geri alınmış
+            // rızayı diriltir. Güvenli taraf: kaydı sil; ConsentStore dosya yokken üçünü de kapalı okur.
+            if (!next.analytics) revokeOnDisk()
         }
         if (next.analytics) enableAnalytics() else disableAnalytics()
+    }
+
+    private fun revokeOnDisk() {
+        val f = consentFile ?: return
+        val gone = try {
+            f.delete() || !f.exists()
+        } catch (e: SecurityException) {
+            false
+        }
+        if (!gone) warn("rıza kaydı silinemedi: geri alma bir sonraki açılışta kalıcı olmayabilir")
     }
 
     /**
@@ -355,6 +389,7 @@ internal class Core(
         userId = null
         distinctIdCache = null
         clearPending()
+        droppedNoIdentity = 0
         statsCache = EMPTY_STATS
         if (d == null) return
         File(d, "queue").deleteRecursively()
@@ -381,7 +416,7 @@ internal class Core(
         val snapshot = props?.let { LinkedHashMap(it) }
         scheduler.post {
             if (!ready()) return@post
-            write(name, time, uuid(), snapshot, takePending(extraOps), userIdArg)
+            write(name, time, uuid(), snapshot, extraOps, userIdArg)
         }
     }
 
@@ -390,13 +425,21 @@ internal class Core(
         time: Long,
         insertId: String,
         props: Map<String, Any?>?,
-        ops: PropertyOps?,
+        extraOps: PropertyOps?,
         userIdArg: String?,
     ) {
         val q = queue ?: return
-        val distinct = userId ?: deviceId ?: return
+        val distinct = userId ?: ensureDeviceId() ?: run {
+            droppedNoIdentity++
+            warn("cihaz kimliği yok: event düşürüldü")
+            refreshStats()
+            return
+        }
         val session = sessionStore?.current() ?: return
         val context = contextProvider?.get(consent, if (foreground) "foreground" else "background") ?: return
+        // Bekleyen kullanıcı özellikleri ANCAK event gerçekten kuyruğa girecekse tüketilir: yukarıdaki
+        // erken dönüşlerde biriken $set/$set_once/$add/$unset olduğu gibi kalır.
+        val ops = takePending(extraOps)
         val line = EventJson.event(
             name = name,
             distinctId = distinct,
@@ -409,10 +452,20 @@ internal class Core(
             context = context,
         )
         val droppedBefore = q.droppedCount()
-        try {
+        // EventQueue dosya hatasını IllegalStateException ya da IOException olarak verir; ikisi de
+        // ana uygulamaya sızmamalı (analitik, host'u çökertmenin gerekçesi değil).
+        val failure: Exception? = try {
             q.append(line)
-        } catch (e: IllegalStateException) {
-            warn("event kuyruğa yazılamadı: $e")
+            null
+        } catch (e: IOException) {
+            e
+        } catch (e: RuntimeException) {
+            e
+        }
+        if (failure != null) {
+            warn("event kuyruğa yazılamadı: $failure")
+            // Host'un setUserProperties çağrısı sessizce yutulmasın: bekleyenler geri konur.
+            restorePending(ops)
             return
         }
         val overflow = q.droppedCount() - droppedBefore
@@ -455,7 +508,8 @@ internal class Core(
     }
 
     private fun refreshStats() {
-        statsCache = dispatcher?.stats() ?: EMPTY_STATS
+        val s = dispatcher?.stats() ?: EMPTY_STATS
+        statsCache = if (droppedNoIdentity == 0) s else s.copy(dropped = s.dropped + droppedNoIdentity)
     }
 
     private fun ready(): Boolean {
@@ -492,6 +546,28 @@ internal class Core(
     private fun sum(a: Number, b: Number): Number =
         if (a is Double || a is Float || b is Double || b is Float) a.toDouble() + b.toDouble() else a.toLong() + b.toLong()
 
+    /** Kimlik kurulumda üretilemediyse (kilitli depo) her event'te yeniden denenir. */
+    private fun ensureDeviceId(): String? {
+        deviceId?.let { return it }
+        val id = deviceIdStore?.getOrCreate() ?: return null
+        deviceId = id
+        distinctIdCache = userId ?: id
+        return id
+    }
+
+    /** Tüketilmiş ama kullanılamamış operasyonları geri yazar; arada biriken yeni değer üstte kalır. */
+    private fun restorePending(ops: PropertyOps?) {
+        if (ops == null) return
+        ops.set?.let { old -> pendingSet = merge(LinkedHashMap(old), pendingSet ?: emptyMap()) }
+        ops.setOnce?.let { old -> pendingSetOnce = merge(LinkedHashMap(old), pendingSetOnce ?: emptyMap()) }
+        ops.unset?.let { old -> pendingUnset = ArrayList(old).apply { addAll(pendingUnset ?: emptyList()) } }
+        ops.add?.let { old ->
+            val acc = LinkedHashMap<String, Number>(old)
+            for ((k, v) in pendingAdd ?: emptyMap()) acc[k] = acc[k]?.let { sum(it, v) } ?: v
+            pendingAdd = acc
+        }
+    }
+
     private fun merge(target: LinkedHashMap<String, Any?>?, extra: Map<String, Any?>): LinkedHashMap<String, Any?> {
         val acc = target ?: LinkedHashMap()
         acc.putAll(extra)
@@ -515,6 +591,10 @@ internal class Core(
         if (set.isNullOrEmpty() && setOnce.isNullOrEmpty() && unset.isNullOrEmpty() && add.isNullOrEmpty()) return null
         return PropertyOps(set, setOnce, unset, add)
     }
+
+    private fun hasPending(): Boolean =
+        !pendingSet.isNullOrEmpty() || !pendingSetOnce.isNullOrEmpty() ||
+            !pendingUnset.isNullOrEmpty() || !pendingAdd.isNullOrEmpty()
 
     private fun clearPending() {
         pendingSet = null

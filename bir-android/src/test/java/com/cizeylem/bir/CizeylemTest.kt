@@ -1,6 +1,8 @@
 package com.cizeylem.bir
 
+import android.app.Activity
 import android.app.Application
+import android.content.Context
 import com.cizeylem.bir.internal.ConsentStore
 import com.cizeylem.bir.internal.Core
 import com.cizeylem.bir.internal.Outcome
@@ -17,6 +19,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
@@ -65,6 +68,7 @@ class CizeylemTest {
     private var clock = 1_700_000_000_000L
     private var mono = 10_000L
     private var ids = 0
+    private val logs = ArrayList<String>()
 
     private fun dir() = File(app.noBackupFilesDir, "cizeylem")
 
@@ -78,7 +82,9 @@ class CizeylemTest {
         dir().deleteRecursively()
     }
 
-    private fun init(config: Configuration = Configuration("ck_w_test")) {
+    private fun init(config: Configuration = Configuration("ck_w_test", logger = Logger { logs.add(it) })) {
+        // Her init yeni bir zamanlayıcı alır: "yeni süreç" senaryosu önceki görev kuyruğunu devralmamalı.
+        sch = TestScheduler()
         Cizeylem.startForTest(
             Core(
                 app = app,
@@ -103,6 +109,8 @@ class CizeylemTest {
     }
 
     private fun bodies() = sent.joinToString("\n")
+
+    private fun count(event: String) = Regex(Regex.escape("\"event\":\"$event\"")).findAll(bodies()).count()
 
     @Test fun `initialize cagrilmadan track istisna firlatmaz`() {
         Cizeylem.track("a")
@@ -243,6 +251,8 @@ class CizeylemTest {
         init()
         grant()
         Cizeylem.setConsent(Consent(analytics = false))
+        // Asıl mekanizma: distinct_id çağıran thread'de, görev kuyruğu boşaltılmadan geçersizleşir.
+        assertNull(Cizeylem.getDistinctId())
         // Geri alma ile aynı turda gelen track: bayat rıza önbelleği burada veri toplardı.
         Cizeylem.track("gecikmis")
         sch.run()
@@ -287,6 +297,142 @@ class CizeylemTest {
         Cizeylem.flush()
         sch.run()
         assertFalse(bodies().contains("\"\$set\""))
+    }
+
+    @Test fun `riza geri alma diske yazilamazsa kayit silinir ve sonraki surec rizasiz baslar`() {
+        init()
+        grant()
+        val consentFile = File(dir(), "consent")
+        assertTrue(consentFile.exists())
+        // atomicWrite "<ad>.tmp" dosyasına yazar; o yol bir dizinse yazma IOException ile düşer.
+        val tmp = File(dir(), "consent.tmp")
+        assertTrue(tmp.mkdirs())
+
+        Cizeylem.setConsent(Consent(analytics = false))
+        sch.run()
+        assertFalse(
+            "kapatma yazılamadıysa kayıt silinmeli: aksi halde bir sonraki süreç rızayı diriltir",
+            consentFile.exists(),
+        )
+
+        // "Yeni süreç": temiz bir çekirdek aynı dizinle başlar.
+        tmp.deleteRecursively()
+        init()
+        sch.run()
+        assertNull(Cizeylem.getDistinctId())
+        assertFalse(File(dir(), "device_id").exists())
+    }
+
+    @Test fun `kuyruga yazilamayan event bekleyen ozellikleri yakmaz`() {
+        init()
+        grant()
+        Cizeylem.setUserProperties(mapOf("plan" to "pro"))
+        // queue.jsonl bir dizinse append dosya hatasıyla düşer.
+        val queueFile = File(File(dir(), "queue"), "queue.jsonl")
+        queueFile.delete()
+        assertTrue(queueFile.mkdirs())
+        Cizeylem.track("kayip")
+        sch.run()
+        assertTrue(sent.isEmpty())
+
+        queueFile.deleteRecursively()
+        Cizeylem.track("sonraki")
+        sch.run()
+        Cizeylem.flush()
+        sch.run()
+        assertTrue("bekleyen \$set geri konmalı", bodies().contains("\"plan\":\"pro\""))
+    }
+
+    @Test fun `kimlik uretilemezse event dusurulur, sayilir ve sonraki event'te yeniden denenir`() {
+        init()
+        // device_id yolu bir dizinse DeviceIdStore depoyu "erişilemez" sayar ve hiçbir şey yazmaz.
+        val idFile = File(dir(), "device_id")
+        assertTrue(idFile.mkdirs())
+        Cizeylem.setConsent(Consent(analytics = true))
+        sch.run()
+        assertNull(Cizeylem.getDistinctId())
+
+        // Erken dönüşte de bekleyen özellikler yanmamalı: event düşer, birikim kalır.
+        Cizeylem.setUserProperties(mapOf("plan" to "pro"))
+        Cizeylem.track("kimliksiz")
+        sch.run()
+        assertEquals(1, Cizeylem.stats().dropped)
+        assertEquals(0, Cizeylem.stats().queued)
+        assertTrue(logs.any { it.contains("cihaz kimliği") })
+
+        // Depo erişilebilir olunca kurulum yarıda kalmaz: kimlik sonraki event'te üretilir.
+        idFile.deleteRecursively()
+        Cizeylem.track("kimlikli")
+        sch.run()
+        assertNotNull(Cizeylem.getDistinctId())
+        assertEquals(1, Cizeylem.stats().queued)
+        Cizeylem.flush()
+        sch.run()
+        assertTrue("düşen event bekleyen \$set'i tüketmemeli", bodies().contains("\"plan\":\"pro\""))
+    }
+
+    @Test fun `Amplitude opt-out devralmada migrated_opt_out olarak isaretlenir`() {
+        val p = app.getSharedPreferences("com.amplitude.api.${app.packageName}", Context.MODE_PRIVATE)
+        p.edit()
+            .putString("com.amplitude.api.deviceId", "a1b2c3d4")
+            .putBoolean("com.amplitude.api.optOut", true)
+            .commit()
+        init()
+        // Açık rıza taze kazanır; eski üçüncü taraf bayrağı yalnız bilgi olarak taşınır.
+        grant()
+        Cizeylem.track("ilk")
+        sch.run()
+        Cizeylem.flush()
+        sch.run()
+        val body = bodies()
+        assertTrue(body.contains("\"migrated_from\":\"amplitude-prefs\""))
+        assertTrue(body.contains("\"migrated_opt_out\":true"))
+        assertTrue(logs.any { it.contains("migrated_opt_out") })
+    }
+
+    @Test fun `riza sonradan gelince ekrandaki Activity icin tek cz_app_opened uretilir`() {
+        init()
+        sch.run()
+        // Rıza yokken yaşam döngüsü izlenmez; Core yalnız bellekte sayar.
+        val a = Robolectric.buildActivity(Activity::class.java).create().start().resume()
+        sch.run()
+        assertTrue(sent.isEmpty())
+
+        Cizeylem.setConsent(Consent(analytics = true))
+        sch.run()
+        Cizeylem.flush()
+        sch.run()
+        assertEquals("ekranda duran Activity tam bir kez aktarılmalı", 1, count("cz_app_opened"))
+
+        // Aynı Activity arka plana gidip dönerse ikinci açılış gelir; çift sayım yoktur.
+        a.pause().stop()
+        sch.run()
+        a.start().resume()
+        sch.run()
+        Cizeylem.flush()
+        sch.run()
+        assertEquals(2, count("cz_app_opened"))
+        assertEquals(1, count("cz_app_backgrounded"))
+    }
+
+    @Test fun `Activity gecisinde cz_app_opened ciftlenmez`() {
+        init()
+        grant()
+        val first = Robolectric.buildActivity(Activity::class.java).create().start().resume()
+        sch.run()
+        // Android sırası: yeni Activity başlar, sonra eskisi durur. Arada ön plan hiç boşalmaz.
+        val second = Robolectric.buildActivity(Activity::class.java).create().start().resume()
+        first.pause().stop()
+        sch.run()
+        Cizeylem.flush()
+        sch.run()
+        assertEquals(1, count("cz_app_opened"))
+        assertEquals(0, count("cz_app_backgrounded"))
+        second.pause().stop()
+        sch.run()
+        Cizeylem.flush()
+        sch.run()
+        assertEquals(1, count("cz_app_backgrounded"))
     }
 
     @Test fun `sendUserProperties bekleyen ozellik yoksa event uretmez`() {
