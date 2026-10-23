@@ -1,5 +1,6 @@
 package com.cizeylem.bir.internal
 
+import com.cizeylem.bir.Stats
 import java.io.File
 import org.json.JSONObject
 import org.junit.Assert.assertEquals

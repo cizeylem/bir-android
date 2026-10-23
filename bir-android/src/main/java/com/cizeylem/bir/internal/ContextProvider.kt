@@ -34,21 +34,31 @@ internal class ContextProvider(app: Context, private val libVersion: String) {
         m["locale"] = Locale.getDefault().toLanguageTag()
         m["timezone"] = TimeZone.getDefault().id
         m["app_state"] = appState
-        packageInfo()?.let {
-            m["app_version"] = it.versionName
-            m["app_build"] = versionCode(it)
-        }
+        // Süreç ömründe sabit olan alanlar önbellekten gelir: her event'te PackageManager IPC'si yapılmaz.
+        appVersion?.let { m["app_version"] = it }
+        appBuild?.let { m["app_build"] = it }
         screen()?.let {
             m["screen_width"] = it.first
             m["screen_height"] = it.second
         }
         networkType()?.let { m["network_type"] = it }
-        installSource()?.let { m["install_source"] = it }
+        installSource?.let { m["install_source"] = it }
         consentScope(consent)?.let { m["consent_scope"] = it }
         return m
     }
 
-    private fun packageInfo() = try {
+    // app_version / app_build / install_source süreç ömründe değişmez (değişen sürüm = yeni süreç).
+    // network_type, ekran ve app_state dinamik kalır; onlar her çağrıda yeniden okunur.
+    private val packageInfo by lazy { readPackageInfo() }
+
+    // versionName null olabilir; "değeri olmayan alan hiç yazılmaz" kuralı gereği o zaman alan hiç yazılmaz.
+    private val appVersion: String? by lazy { packageInfo?.versionName }
+
+    private val appBuild: Long? by lazy { packageInfo?.let { versionCode(it) } }
+
+    private val installSource: String? by lazy { readInstallSource() }
+
+    private fun readPackageInfo() = try {
         app.packageManager.getPackageInfo(app.packageName, 0)
     } catch (_: Exception) {
         null
@@ -108,7 +118,7 @@ internal class ContextProvider(app: Context, private val libVersion: String) {
     }
 
     /** Paket bulunamazsa/istisna olursa null: bilinmeyeni "other" ile karıştırmamak için alan yazılmaz. */
-    private fun installSource(): String? = try {
+    private fun readInstallSource(): String? = try {
         val pm = app.packageManager
         val pkg: String? = if (Build.VERSION.SDK_INT >= 30) {
             pm.getInstallSourceInfo(app.packageName).installingPackageName

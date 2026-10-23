@@ -1,7 +1,6 @@
 package com.cizeylem.bir.internal
 
-/** `dropped`: kuyruğun taşmada düşürdüğü; `rejected`: sunucunun kabul etmediği (400/413). İkisi karıştırılmaz. */
-internal data class Stats(val queued: Int, val dropped: Int, val rejected: Int, val disabled: Boolean)
+import com.cizeylem.bir.Stats
 
 /**
  * Gönderim döngüsü: kuyruktan batch alır, gönderir, sonuca göre siler / böler / bekler / durur
@@ -16,6 +15,11 @@ internal class Dispatcher(
     private val send: (String) -> Response,
     private val now: () -> Long,
     private val random: () -> Double,
+    // `now` backoff içindir ve MONOTONİK olmalıdır; `sent_at` ise sunucuyla ortak zaman eksenindedir ve
+    // DUVAR saatinden gelir. Verilmezse (testler) tek saat kullanılır.
+    private val wallClock: (() -> Long)? = null,
+    // Sessiz kalırsa teşhis edilemeyecek durumlar (400 reddi, 413 düşürmesi, 401 durdurması) buradan duyurulur.
+    private val warn: (String) -> Unit = {},
 ) {
     constructor(queue: EventQueue, transport: Transport, now: () -> Long, random: () -> Double) :
         this(queue, transport::send, now, random)
@@ -44,7 +48,7 @@ internal class Dispatcher(
         while (!disabled) {
             val lines = takeBatch(queue.peek(size))
             if (lines.isEmpty()) return
-            val batch = EventJson.batch(now(), lines)
+            val batch = EventJson.batch(wallClock?.invoke() ?: now(), lines)
             skipped += batch.skipped
             // Hepsi bozuksa gönderecek event yok; boş batch göndermek anlamsız, satırlar doğrudan düşer.
             if (batch.skipped == lines.size) {
@@ -58,12 +62,14 @@ internal class Dispatcher(
                     return
                 }
                 Outcome.FATAL -> {
+                    warn("yetkilendirme reddedildi (401/403): SDK durduruldu")
                     disabled = true
                     return
                 }
                 Outcome.SPLIT -> {
                     if (lines.size == 1) {
                         // Tek başına sığmayan event: tutarsak döngü sonsuza dek kilitlenir.
+                        warn("event tek başına batch sınırını aşıyor (413): atıldı")
                         rejected++
                         queue.removeFirst(1)
                     } else {
@@ -72,7 +78,10 @@ internal class Dispatcher(
                     }
                     continue
                 }
-                Outcome.DROP -> rejected += lines.size
+                Outcome.DROP -> {
+                    warn("sunucu batch'i reddetti (400): ${lines.size} event atıldı")
+                    rejected += lines.size
+                }
                 Outcome.OK -> Unit
             }
             queue.removeFirst(lines.size)

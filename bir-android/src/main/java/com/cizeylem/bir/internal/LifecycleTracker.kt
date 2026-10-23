@@ -84,7 +84,11 @@ internal class LifecycleTracker(
         return State(version, build)
     }
 
-    private fun checkInstallOrUpdate() {
+    /**
+     * Diske ve PackageManager'a gider: ana thread'den ÇAĞRILMAZ. `register()` ile birlikte ya da facade
+     * gibi callback kaydını kendisi yapan çağıranlarda ayrı olarak, SDK'nın arka plan thread'inde çağrılır.
+     */
+    internal fun checkInstallOrUpdate() {
         if (writeFailed) return
         val current = currentVersion() ?: return // Sürüm okunamıyorsa yanlış event üretmektense sessiz kal.
         val existed = stateFile.isFile
