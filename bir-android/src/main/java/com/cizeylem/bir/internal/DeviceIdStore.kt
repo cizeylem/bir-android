@@ -68,9 +68,9 @@ internal class DeviceIdStore(
 
     private fun readState(): State {
         val f = file ?: return State.Unavailable
-        // Dizin yoksa ve oluşturulamıyorsa (kilitli depolama) erişilemez; varsa yalnız "dosya yok" olabilir.
-        val parent = f.parentFile!!
-        if (!parent.isDirectory && !parent.mkdirs() && !parent.isDirectory) return State.Unavailable
+        // Salt-okuma yolu diske hiçbir iz bırakmaz (rıza öncesi read() çağrılabilir): mkdirs yalnız write()'ta.
+        // Kilitli depolamada noBackupDir'in kendisi erişilemez olduğundan isDirectory sınaması aynı işi görür.
+        if (noBackupDir?.isDirectory != true) return State.Unavailable
         if (!f.exists()) return State.Missing
         val text = try { f.readText(Charsets.UTF_8) } catch (e: IOException) { return State.Unavailable }
         // Bozuk tanımı: kırpılmış içerik 8-4-4-4-12 onaltılık UUID biçiminde değil ya da sıfır-UUID.

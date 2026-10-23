@@ -77,4 +77,21 @@ class DeviceIdStoreTest {
         assertEquals("99999999-2222-4333-8444-555555555555", store.read())
         assertNotEquals(fixed, store.read())
     }
+
+    @Test fun `bos dizinde read ve getOrCreate null yollari iz birakmaz`() {
+        val store = DeviceIdStore(dir) { fixed }
+        assertNull(store.read())
+        assertFalse(File(dir, "cizeylem").exists())
+
+        // Erişilemez dizin: getOrCreate null döner ve hiçbir şey yaratılmaz.
+        val missing = File(dir, "yok")
+        assertNull(DeviceIdStore(missing) { fixed }.read())
+        assertNull(DeviceIdStore(missing) { fixed }.getOrCreate())
+        assertFalse(missing.exists())
+
+        // Dosya yerine dizin (okunamayan): null yolu da dizin yaratmaz/değiştirmez.
+        idFile().mkdirs()
+        assertNull(DeviceIdStore(dir) { fixed }.getOrCreate())
+        assertTrue(idFile().isDirectory)
+    }
 }
