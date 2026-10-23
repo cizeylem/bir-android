@@ -11,6 +11,8 @@ android {
         minSdk = 21
         // Kütüphane modüllerinde targetSdk yalnız test APK'sını etkiler; şartname gereği sabitlenir.
         testOptions.targetSdk = 36
+        // Modül küçültülmeden yayınlanır; kurallar AAR ile tüketicinin R8'ine geçer (SPEC §1).
+        consumerProguardFiles("consumer-rules.pro")
     }
 
     compileOptions {
