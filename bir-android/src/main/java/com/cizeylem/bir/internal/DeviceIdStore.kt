@@ -1,7 +1,6 @@
 package com.cizeylem.bir.internal
 
 import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
 
 /**
@@ -27,25 +26,10 @@ internal class DeviceIdStore(
         else -> null
     }
 
-    /** Atomik yazar: `.tmp` + fsync + `renameTo` (EventQueue ile aynı desen). Başarısızlıkta IOException. */
+    /** Atomik yazar (bkz. atomicWrite). Başarısızlıkta IOException. */
     fun write(id: String) {
         val target = file ?: throw IOException("noBackupDir yok")
-        val parent = target.parentFile!!
-        if (!parent.isDirectory && !parent.mkdirs() && !parent.isDirectory) {
-            throw IOException("dizin oluşturulamadı: $parent")
-        }
-        val tmp = File(parent, "device_id.tmp")
-        FileOutputStream(tmp).use { out ->
-            out.write(id.toByteArray(Charsets.UTF_8))
-            // Rename'den önce diske indir; aksi halde çökmede boş dosya kalabilir (boş dosya = yeni id).
-            out.flush()
-            out.fd.sync()
-        }
-        if (!tmp.renameTo(target)) {
-            // Bazı dosya sistemleri hedef varken rename'i reddeder.
-            target.delete()
-            if (!tmp.renameTo(target)) throw IOException("device_id yerine konamadı")
-        }
+        atomicWrite(target, id.toByteArray(Charsets.UTF_8))
     }
 
     fun getOrCreate(): String? {

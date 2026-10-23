@@ -1,7 +1,6 @@
 package com.cizeylem.bir.internal
 
 import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
 
 /**
@@ -9,7 +8,7 @@ import java.io.IOException
  *
  * Durum düz metin `<başlangıç>|<son etkinlik>` olarak saklanır (iki Long, ondalık). org.json yerine düz metin:
  * iki sayı için JSON gereksiz ve bu sınıf saf JVM testinde (stub org.json'suz) çalışabilsin diye.
- * Pencere son etkinlikten kayar; süreç ölüp açılsa da oturum kalıcı dosyadan sürer.
+ * Pencere son etkinlikten kayar (son etkinlik en çok 60 sn gecikmeyle yazılır); süreç ölüp açılsa da oturum kalıcı dosyadan sürer.
  * Disk erişimi var: çağıran thread ana thread olmamalı (SPEC §3 Eşzamanlılık).
  */
 internal class SessionStore(
@@ -20,15 +19,19 @@ internal class SessionStore(
     private var start: Long? = null
     private var last: Long = 0
     private var loaded = false
+    private var lastPersisted = 0L
 
     @Synchronized
     fun current(): String {
         if (!loaded) { load(); loaded = true }
         val t = now()
         val s = start
-        if (s == null || t - last > timeoutMs) start = t
+        val started = s == null || t - last > timeoutMs
+        if (started) start = t
         last = t
-        persist()
+        // fsync TV eMMC'sinde onlarca ms sürer; `last` yalnız kayan pencere için tutulur. Bu yüzden yalnız
+        // oturum başlayınca ya da son yazımdan ≥60 sn sonra yazılır; çökmede last en fazla 60 sn eski kalır.
+        if (started || t - lastPersisted >= PERSIST_INTERVAL_MS) persist()
         return start.toString()
     }
 
@@ -48,25 +51,20 @@ internal class SessionStore(
         val l = parts[1].toLongOrNull() ?: return
         start = s
         last = l
+        lastPersisted = l
     }
 
-    /** Atomik yazar (`.tmp` + fsync + `renameTo`, DeviceIdStore ile aynı desen). Yazılamazsa bellekteki oturum sürer. */
+    /** Yazılamazsa bellekteki oturum sürer: kalıcılık en-iyi-çaba. */
     private fun persist() {
         try {
-            val parent = file.parentFile ?: return
-            if (!parent.isDirectory && !parent.mkdirs() && !parent.isDirectory) return
-            val tmp = File(parent, file.name + ".tmp")
-            FileOutputStream(tmp).use { out ->
-                out.write("$start|$last".toByteArray(Charsets.UTF_8))
-                out.flush()
-                out.fd.sync()
-            }
-            if (!tmp.renameTo(file)) {
-                file.delete()
-                tmp.renameTo(file)
-            }
+            atomicWrite(file, "$start|$last".toByteArray(Charsets.UTF_8))
+            lastPersisted = last
         } catch (e: IOException) {
-            // Kalıcılık en-iyi-çaba: disk yoksa oturum yalnız süreç ömrü boyunca tutulur.
+            // Disk yoksa oturum yalnız süreç ömrü boyunca tutulur.
         }
+    }
+
+    private companion object {
+        const val PERSIST_INTERVAL_MS = 60_000L
     }
 }

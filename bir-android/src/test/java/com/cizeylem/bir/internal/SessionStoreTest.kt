@@ -64,4 +64,25 @@ class SessionStoreTest {
         file.writeText("çöp")
         assertEquals("1000000", store().current())
     }
+
+    @Test fun `last en cok 60 sn aralikla diske yazilir`() {
+        val s = store()
+        s.current()
+        val stamp = file.readText()
+        assertEquals("1000000|1000000", stamp)
+        t += 59_000L
+        s.current()
+        assertEquals(stamp, file.readText())
+        t += 1_000L
+        s.current()
+        assertEquals("1000000|1060000", file.readText())
+    }
+
+    @Test fun `yeni oturum 60 sn dolmadan da hemen yazilir`() {
+        val s = store()
+        s.current()
+        t += 31 * 60_000L
+        s.current()
+        assertEquals("${t}|$t", file.readText())
+    }
 }

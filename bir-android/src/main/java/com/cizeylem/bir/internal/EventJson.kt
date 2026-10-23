@@ -1,6 +1,7 @@
 package com.cizeylem.bir.internal
 
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 
 /** `$set`/`$set_once`/`$unset`/`$add` operasyonları; hepsi null ya da boşsa hiçbiri yazılmaz. */
@@ -10,6 +11,8 @@ internal data class PropertyOps(
     val unset: List<String>?,
     val add: Map<String, Number>?,
 )
+
+internal data class Batch(val body: String, val skipped: Int)
 
 /**
  * Protokol gövdesi (SPEC §2). Opsiyonel alanlar null ya da boşken HİÇ yazılmaz: sunucu `$` önekli
@@ -45,11 +48,18 @@ internal object EventJson {
         return o.toString()
     }
 
-    /** Satırlar zaten JSON metni (EventQueue yorumlamaz); yeniden kodlanır, string olarak gömülmez. */
-    fun batch(sentAt: Long, lines: List<String>): String {
+    /**
+     * Satırlar zaten JSON metni (EventQueue yorumlamaz); yeniden kodlanır, string olarak gömülmez.
+     * Çökmede yarım yazılmış satır olabilir; fırlatsaydık gönderim aynı satırda sonsuza dek tıkanırdı (poison
+     * message). Bozuk satır atlanır, sayısı çağırana döner (çağıran gönderilen sayı kadar sildiği için kuyruktan düşer).
+     */
+    fun batch(sentAt: Long, lines: List<String>): Batch {
         val arr = JSONArray()
-        for (l in lines) arr.put(JSONObject(l))
-        return JSONObject().put("sent_at", sentAt).put("events", arr).toString()
+        var skipped = 0
+        for (l in lines) {
+            try { arr.put(JSONObject(l)) } catch (e: JSONException) { skipped++ }
+        }
+        return Batch(JSONObject().put("sent_at", sentAt).put("events", arr).toString(), skipped)
     }
 
     private fun obj(m: Map<String, Any?>): JSONObject {

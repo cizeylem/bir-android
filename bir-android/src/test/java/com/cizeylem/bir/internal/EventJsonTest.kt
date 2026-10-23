@@ -61,10 +61,21 @@ class EventJsonTest {
     @Test fun `batch govdesi sent_at ve events dizisi icerir`() {
         val a = EventJson.event("a", "d", 1L, "i1", "1", null, null, null, ctx)
         val b = EventJson.event("b", "d", 2L, "i2", "1", null, null, null, ctx)
-        val body = JSONObject(EventJson.batch(5L, listOf(a, b)))
+        val body = JSONObject(EventJson.batch(5L, listOf(a, b)).body)
         assertEquals(5L, body.getLong("sent_at"))
         val arr: JSONArray = body.getJSONArray("events")
         assertEquals(2, arr.length())
+        assertEquals("i2", arr.getJSONObject(1).getString("insert_id"))
+    }
+
+    @Test fun `bozuk satir atlanir ve sayisi bildirilir`() {
+        val a = EventJson.event("a", "d", 1L, "i1", "1", null, null, null, ctx)
+        val b = EventJson.event("b", "d", 2L, "i2", "1", null, null, null, ctx)
+        val r = EventJson.batch(5L, listOf(a, a.substring(0, 20), b, "çöp"))
+        assertEquals(2, r.skipped)
+        val arr = JSONObject(r.body).getJSONArray("events")
+        assertEquals(2, arr.length())
+        assertEquals("i1", arr.getJSONObject(0).getString("insert_id"))
         assertEquals("i2", arr.getJSONObject(1).getString("insert_id"))
     }
 }
