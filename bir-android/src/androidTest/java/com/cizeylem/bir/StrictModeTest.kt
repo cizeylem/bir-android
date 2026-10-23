@@ -3,11 +3,13 @@ package com.cizeylem.bir
 import android.app.Application
 import android.os.StrictMode
 import androidx.test.core.app.ApplicationProvider
+import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.File
 
 /**
  * SPEC §8: StrictMode `penaltyDeath` altında initialize → setConsent → track → flush ihlalsiz çalışmalı.
@@ -21,6 +23,9 @@ class StrictModeTest {
     private lateinit var oldVm: StrictMode.VmPolicy
 
     @Before fun strictAc() {
+        // Temiz sayfa (StrictMode'dan ÖNCE): önceki/çöken koşudan kalan rıza, kuyruk, device_id ve durum
+        // dosyaları silinir; böylece bootstrap bayat sayı yayınlayamaz ve queued okumaları bu koşuya aittir.
+        File(InstrumentationRegistry.getInstrumentation().targetContext.noBackupFilesDir, "cizeylem").deleteRecursively()
         oldThread = StrictMode.getThreadPolicy()
         oldVm = StrictMode.getVmPolicy()
         StrictMode.setThreadPolicy(StrictMode.ThreadPolicy.Builder().detectAll().penaltyLog().penaltyDeath().build())
@@ -37,13 +42,8 @@ class StrictModeTest {
         val app = ApplicationProvider.getApplicationContext<Application>()
         // Kapalı bir porta: ağ hatası beklenir, ihlal değil. Yerel adres, gerçek sunucuya veri sızdırmaz.
         Cizeylem.initialize(app, Configuration(writeKey = "ck_w_test", endpoint = "http://127.0.0.1:9"))
-        // Rıza kapatma kalıcı kuyruğu SİLER ve SDK thread'inde sıralı çalışır: bundan sonraki queued >= 1,
-        // önceki koşudan kalan satır değil, bu track'in yazdığı satırdır.
-        Cizeylem.setConsent(Consent())
-        // stats() bayat önbellek okuyabilir; silme görevi çalışıp önbellek tazelenene kadar beklenir.
-        val sifirBitis = System.currentTimeMillis() + 10_000
-        while (Cizeylem.stats().queued != 0 && System.currentTimeMillis() < sifirBitis) Thread.sleep(20)
-        assertEquals("kuyruk sıfırlanmadı", 0, Cizeylem.stats().queued)
+        // Önceki "rızayı kapat + sıfırlanmasını yokla" adımı kaldırıldı: temiz sayfa @Before'da dizin silinerek
+        // sağlandığından gereksiz (ve zaten bayat önbelleğe karşı yetersizdi).
         Cizeylem.setConsent(Consent(analytics = true))
         Cizeylem.track("strictmode_denemesi", mapOf("n" to 1))
         Cizeylem.flush()
