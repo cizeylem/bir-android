@@ -44,7 +44,10 @@ internal class Transport(endpoint: String, private val apiKey: String, path: Str
             val code = conn.responseCode
             val outcome = map(code)
             // bir-js: düşüş yolundaki (RETRY) her kodda Retry-After okunur (503 + Retry-After yaygın).
-            val retryAfter = if (outcome == Outcome.RETRY) parseRetryAfter(conn.getHeaderField("Retry-After")) else null
+            var retryAfter = if (outcome == Outcome.RETRY) parseRetryAfter(conn.getHeaderField("Retry-After")) else null
+            // SPEC §3 "429 30 sn": başlık yoksa (ya da çözülemezse) varsayılan bekleme. Durum kodunu yalnız
+            // Transport görür; Dispatcher kod bilmez, sadece retryAfterMs'e uyar.
+            if (code == 429 && retryAfter == null) retryAfter = DEFAULT_429_MS
             // Bağlantı havuzda yeniden kullanılabilsin diye gövde (4xx/5xx'te errorStream) sonuna dek okunur.
             runCatching { (if (code >= 400) conn.errorStream else conn.inputStream)?.use { it.readBytes() } }
             Response(outcome, retryAfter)
@@ -84,6 +87,7 @@ internal class Transport(endpoint: String, private val apiKey: String, path: Str
 
     private companion object {
         const val TIMEOUT_MS = 30_000
+        const val DEFAULT_429_MS = 30_000L
         const val MAX_SECONDS = 31_536_000L // taşmayı ve saçma değerleri önler
     }
 }

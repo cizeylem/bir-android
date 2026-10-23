@@ -126,13 +126,25 @@ class TransportTest {
         assertNull(transport().send("{}").retryAfterMs)
     }
 
-    @Test fun `Retry-After yoksa ya da cozulemezse null`() {
+    @Test fun `429 Retry-After basligi yoksa 30000 ms varsayilani doner`() {
         status = 429
+        assertEquals(30_000L, transport().send("{}").retryAfterMs)
+        // Açık başlık varsayılanı ezer (429 + Retry-After: 7 testi yukarıda).
+    }
+
+    @Test fun `429 disinda Retry-After yoksa ya da cozulemezse null`() {
+        status = 503
         assertNull(transport().send("{}").retryAfterMs)
         headers = mapOf("Retry-After" to "yarin")
         assertNull(transport().send("{}").retryAfterMs)
         headers = mapOf("Retry-After" to "-5")
         assertNull(transport().send("{}").retryAfterMs)
+    }
+
+    @Test fun `429 ve cozulemeyen Retry-After de 30000 ms varsayilanina duser`() {
+        status = 429
+        headers = mapOf("Retry-After" to "yarin")
+        assertEquals(30_000L, transport().send("{}").retryAfterMs)
     }
 
     @Test fun `Retry-After HTTP-date bicimi ms'ye cevrilir`() {

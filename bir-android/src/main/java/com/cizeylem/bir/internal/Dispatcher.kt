@@ -97,7 +97,8 @@ internal class Dispatcher(
     private fun scheduleBackoff(retryAfterMs: Long?) {
         val wait = retryAfterMs ?: run {
             val base = BACKOFF_SEC[minOf(failures, BACKOFF_SEC.size - 1)] * 1000L
-            (base * (0.5 + random())).toLong() // ±%50 jitter
+            // Jitter yalnız aşağı yönlü, [%50, %100] (bir-js ile aynı): 300 sn gerçek tavan kalır.
+            (base * (0.5 + 0.5 * random())).toLong()
         }
         failures++
         backoffUntil = now() + wait

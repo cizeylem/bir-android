@@ -121,6 +121,7 @@ class DispatcherTest {
 
     @Test fun `backoff takvimi 1-8-32-128-300 sn ve ust sinir 300 sn`() {
         fill(1)
+        rnd = 1.0 // çarpan 1.0: takvim değerinin kendisi
         val d = dispatcher()
         val expected = listOf(1, 8, 32, 128, 300, 300, 300)
         for ((i, sec) in expected.withIndex()) {
@@ -135,23 +136,31 @@ class DispatcherTest {
         }
     }
 
-    @Test fun `backoff jitter 0_5 ile 1_5 carpani arasindadir`() {
-        // 1. adım 1 sn: random 0.0 -> 500 ms, random ~1.0 -> 1500 ms.
-        for ((rv, ms) in listOf(0.0 to 500L, 0.999999 to 1499L)) {
+    @Test fun `backoff jitter takvim degerinin yuzde 50 ile yuzde 100 arasindadir ve tavani asmaz`() {
+        val steps = listOf(1, 8, 32, 128, 300, 300)
+        for ((rv, factor) in listOf(0.0 to 0.5, 1.0 to 1.0)) {
             tmp.root.deleteRecursively()
             queue = EventQueue(File(tmp.root, "q"), maxEvents = 5000)
             sent.clear()
             fill(1)
             rnd = rv
-            script += r(Outcome.RETRY)
             val d = dispatcher()
-            d.drain()
-            clock += ms - 1
-            d.drain()
-            assertEquals("random=$rv erken gönderdi", 1, sent.size)
-            clock += 1
-            d.drain()
-            assertEquals("random=$rv zamanında göndermedi", 2, sent.size)
+            for ((i, sec) in steps.withIndex()) {
+                val ms = (sec * 1000L * factor).toLong()
+                script += r(Outcome.RETRY)
+                d.drain()
+                assertEquals(i + 1, sent.size)
+                clock += ms - 1
+                d.drain()
+                assertEquals("random=$rv adım $i erken gönderdi", i + 1, sent.size)
+                clock += 1
+                if (i < steps.size - 1) continue
+                // Son adım: tam sınırda gönderim var; 300 sn'yi aşan bekleme yok.
+                assertTrue("tavan aşıldı", ms <= 300_000L)
+                script += r(Outcome.RETRY)
+                d.drain()
+                assertEquals("random=$rv sınırda göndermedi", steps.size + 1, sent.size)
+            }
         }
     }
 
