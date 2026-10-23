@@ -12,6 +12,7 @@ android {
         // Kütüphane modüllerinde targetSdk yalnız test APK'sını etkiler; şartname gereği sabitlenir.
         testOptions.targetSdk = 36
         // Modül küçültülmeden yayınlanır; kurallar AAR ile tüketicinin R8'ine geçer (SPEC §1).
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
     }
 
@@ -36,4 +37,7 @@ dependencies {
     // Çekirdekte üçüncü taraf bağımlılık yok: implementation/api satırı eklenmez.
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
+    // Yalnız androidTest: AAR'a girmez, çekirdeğin çalışma zamanı bağımlılığı değildir.
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
 }

@@ -7,7 +7,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Process
-import android.view.WindowManager
+import android.hardware.display.DisplayManager
 import com.cizeylem.bir.Consent
 import java.util.Locale
 import java.util.TimeZone
@@ -71,8 +71,10 @@ internal class ContextProvider(app: Context, private val libVersion: String) {
     /** dp cinsinden, cihazın DOĞAL yönüne göre: yatay tutulurken de aynı değerler çıkar. */
     @Suppress("DEPRECATION")
     private fun screen(): Pair<Int, Int>? = try {
-        val wm = app.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        val d = wm.defaultDisplay
+        // WindowManager Application bağlamından alınınca API 30+'da StrictMode IncorrectContextUse ihlali verir
+        // (görsel olmayan bağlam). DisplayManager görsel bağlam istemez; varsayılan ekran aynı ekrandır.
+        val dmgr = app.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+        val d = dmgr.getDisplay(android.view.Display.DEFAULT_DISPLAY)
         val dm = android.util.DisplayMetrics()
         d.getRealMetrics(dm)
         val swapped = d.rotation == android.view.Surface.ROTATION_90 || d.rotation == android.view.Surface.ROTATION_270
