@@ -353,9 +353,13 @@ internal class Core(
             store.write(next)
         } catch (e: IOException) {
             warn("rıza kaydı yazılamadı: $e")
-            // Kapatma yazılamazsa diskte hâlâ "analytics=1" kalır ve BİR SONRAKİ SÜREÇ geri alınmış
-            // rızayı diriltir. Güvenli taraf: kaydı sil; ConsentStore dosya yokken üçünü de kapalı okur.
-            if (!next.analytics) revokeOnDisk()
+            // Yazma HANGİ YÖNDE düşerse düşsün kayıt silinir. Diskte kalan eski kayıt her zaman daha
+            // GENİŞ bir rızayı diriltebilir: yalnız "analytics kapandı" değil, "adSharing kapandı" da
+            // bir sonraki süreçte geri açılırdı. Silmek her zaman daha kısıtlayıcı yöndedir —
+            // ConsentStore dosya yokken üçünü de kapalı okur. Rıza VERME yönünde düşse bile doğrusu
+            // budur: o süreçte bellekteki rıza geçerli kalır, sonraki süreç rızasız başlar ve host
+            // rızayı yeniden sorar; bayat ve daha geniş bir rızayı diskte bırakmaktan iyidir.
+            revokeOnDisk()
         }
         if (next.analytics) enableAnalytics() else disableAnalytics()
     }
@@ -367,7 +371,7 @@ internal class Core(
         } catch (e: SecurityException) {
             false
         }
-        if (!gone) warn("rıza kaydı silinemedi: geri alma bir sonraki açılışta kalıcı olmayabilir")
+        if (!gone) warn("rıza kaydı silinemedi: rıza değişikliği bir sonraki açılışta kalıcı olmayabilir")
     }
 
     /**

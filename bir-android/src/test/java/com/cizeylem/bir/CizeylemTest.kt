@@ -323,6 +323,27 @@ class CizeylemTest {
         assertFalse(File(dir(), "device_id").exists())
     }
 
+    @Test fun `kismi riza daraltmasi yazilamazsa da kayit silinir`() {
+        init()
+        grant(Consent(analytics = true, adSharing = true))
+        val consentFile = File(dir(), "consent")
+        assertTrue(ConsentStore(consentFile).read().adSharing)
+        val tmp = File(dir(), "consent.tmp")
+        assertTrue(tmp.mkdirs())
+
+        // Daraltma: analytics açık kalıyor, adSharing kapanıyor. Yazma düşerse eski (daha geniş)
+        // kayıt diskte kalırsa bir sonraki süreç adSharing'i geri açardı.
+        Cizeylem.setConsent(Consent(analytics = true, adSharing = false))
+        sch.run()
+        assertFalse(consentFile.exists())
+
+        tmp.deleteRecursively()
+        init()
+        sch.run()
+        assertEquals(Consent(false, false, false), ConsentStore(consentFile).read())
+        assertNull(Cizeylem.getDistinctId())
+    }
+
     @Test fun `kuyruga yazilamayan event bekleyen ozellikleri yakmaz`() {
         init()
         grant()
@@ -417,16 +438,24 @@ class CizeylemTest {
 
     @Test fun `Activity gecisinde cz_app_opened ciftlenmez`() {
         init()
-        grant()
+        sch.run()
+        // A rıza ÖNCESİ başlar: tracker henüz yok, Core yalnız bellekte sayar.
         val first = Robolectric.buildActivity(Activity::class.java).create().start().resume()
         sch.run()
-        // Android sırası: yeni Activity başlar, sonra eskisi durur. Arada ön plan hiç boşalmaz.
+        // Rıza gelince attachTracker A'yı aktarır (tek açılış).
+        Cizeylem.setConsent(Consent(analytics = true))
+        sch.run()
+        Cizeylem.flush()
+        sch.run()
+        sent.clear()
+        // Android sırası: yeni Activity başlar, sonra eskisi durur. Arada ön plan hiç boşalmaz,
+        // aktarılmış A'nın durması ikinci bir açılış/arka plan üretmemeli.
         val second = Robolectric.buildActivity(Activity::class.java).create().start().resume()
         first.pause().stop()
         sch.run()
         Cizeylem.flush()
         sch.run()
-        assertEquals(1, count("cz_app_opened"))
+        assertEquals("geçişte ikinci bir açılış olmamalı", 0, count("cz_app_opened"))
         assertEquals(0, count("cz_app_backgrounded"))
         second.pause().stop()
         sch.run()
