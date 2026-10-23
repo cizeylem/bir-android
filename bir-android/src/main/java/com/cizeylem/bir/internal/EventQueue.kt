@@ -40,51 +40,60 @@ internal class EventQueue(
         val clean = line.replace('\r', ' ').replace('\n', ' ')
         val bytes = (clean + "\n").toByteArray(UTF_8)
         withLock {
-            val before = if (cacheValid()) cachedCount else -1
+            val before = physicalCount()
             RandomAccessFile(file, "rw").use { raf ->
                 truncateTornTail(raf)
                 raf.seek(raf.length())
                 raf.write(bytes)
             }
-            if (before >= 0) remember(before + 1) else cachedLength = -1L
-            prune()
+            remember(before + 1)
+            // Mantıksal görünüm son maxEvents satırdır; sınırın üstündeki her append bir event düşürür.
+            if (before >= maxEvents) dropped++
+            prune(logicalAfterAppend = minOf(before + 1, maxEvents))
         }
     }
 
     fun peek(n: Int): List<String> = withLock {
-        if (n <= 0) emptyList() else readLines().take(n)
+        if (n <= 0) emptyList() else logicalLines().take(n)
     }
 
     fun removeFirst(n: Int) {
         if (n <= 0) return
         withLock {
-            val lines = readLines()
+            val lines = logicalLines()
             if (lines.isNotEmpty()) rewrite(lines.drop(n))
         }
     }
 
-    fun size(): Int = withLock {
-        if (cacheValid()) cachedCount else readLines().size.also { remember(it) }
-    }
+    fun size(): Int = withLock { minOf(physicalCount(), maxEvents) }
 
     fun droppedCount(): Int = synchronized(monitor) { dropped }
 
-    private fun prune() {
-        if (cacheValid() && cachedCount <= maxEvents && file.length() <= maxBytes) return
-        val lines = readLines()
+    // Dolu kuyrukta her append'de dosyayı yeniden yazmamak için (TV'de pahalı) dosya fiziksel olarak
+    // maxEvents + slack satıra kadar büyür; eşik aşılınca tek seferde maxEvents'e budanır. Slack %10:
+    // yeniden yazım her ~100 append'de bir olur, dosya en fazla %10 şişer. Okuyucular yalnız son
+    // maxEvents satırı gördüğü için bu dışarıdan fark edilmez.
+    // Bayt sınırı ise sert tutulur (dosya hiçbir zaman maxBytes'ı aşmaz); normal event boyutlarında
+    // 5 MB'a ulaşılmaz, bu yüzden bu yol seyrek çalışır.
+    private fun prune(logicalAfterAppend: Int) {
+        val slack = maxOf(1, maxEvents / 10)
+        val overCount = cachedCount > maxEvents + slack
+        val overBytes = file.length() > maxBytes
+        if (!overCount && !overBytes) return
+        val lines = logicalLines()
         var start = 0
         var bytes = lines.sumOf { it.toByteArray(UTF_8).size.toLong() + 1 }
-        while (start < lines.size && (lines.size - start > maxEvents || bytes > maxBytes)) {
+        while (start < lines.size && bytes > maxBytes) {
             bytes -= lines[start].toByteArray(UTF_8).size + 1
             start++
         }
-        if (start == 0) {
-            remember(lines.size)
-            return
-        }
-        dropped += start
+        // Slack satırları zaten mantıksal olarak sayıldı; yalnız mantıksal görünümden giden event'ler eklenir.
+        dropped += logicalAfterAppend - (lines.size - start)
         rewrite(lines.drop(start))
     }
+
+    private fun physicalCount(): Int =
+        if (cacheValid()) cachedCount else rawLines().size.also { remember(it) }
 
     private fun rewrite(lines: List<String>) {
         tmp.outputStream().use { out ->
@@ -101,8 +110,10 @@ internal class EventQueue(
         remember(lines.size)
     }
 
+    private fun logicalLines(): List<String> = rawLines().takeLast(maxEvents)
+
     /** Yalnız '\n' ile bitmiş satırları döner; sondaki yarım satır atılır. */
-    private fun readLines(): List<String> {
+    private fun rawLines(): List<String> {
         if (!file.exists()) return emptyList()
         val data = file.readBytes()
         val last = data.lastIndexOf('\n'.code.toByte())

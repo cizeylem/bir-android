@@ -51,6 +51,28 @@ class EventQueueTest {
         assertEquals("""{"n":1005}""", q.peek(1000).last())
     }
 
+    @Test fun `sinirin ustunde fiziksel budama olmasa da mantiksal gorunum dogrudur`() {
+        val q = EventQueue(dir)
+        (1..1050).forEach { q.append("""{"n":$it}""") }
+        // 1050 <= 1000 + %10 slack: dosya henüz budanmamış, 1050 satır fiziksel olarak duruyor.
+        assertEquals(1050, File(dir, "queue.jsonl").readLines().size)
+        assertEquals(1000, q.size())
+        assertEquals(50, q.droppedCount())
+        assertEquals((51..60).map { """{"n":$it}""" }, q.peek(10))
+        assertEquals("""{"n":1050}""", q.peek(5000).last())
+        assertEquals(1000, q.peek(5000).size)
+        // Yeni örnek de aynı mantıksal görünümü görür.
+        assertEquals(1000, EventQueue(dir).size())
+        // removeFirst mantıksal görünüm üzerinde çalışır.
+        q.removeFirst(2)
+        assertEquals("""{"n":53}""", q.peek(1).single())
+        assertEquals(998, q.size())
+        // Eşik aşılınca tek seferde budanır, mantık değişmez.
+        (1051..1200).forEach { q.append("""{"n":$it}""") }
+        assertTrue(File(dir, "queue.jsonl").readLines().size <= 1100)
+        assertEquals("""{"n":1200}""", q.peek(5000).last())
+    }
+
     @Test fun `5 MB asilinca en eskiler dusurulur`() {
         val q = EventQueue(dir)
         val big = "x".repeat(1024 * 1024 - 20)
