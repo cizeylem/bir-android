@@ -39,15 +39,17 @@ API 21+ olduğundan alt sınırı yükseltmek kazanç değil, kapsam kaybı olur
 
 ### StrictModeTest kanıtının kapsamı (neyin kanıtlandığı, neyin kanıtlanmadığı)
 
-- `ThreadPolicy` yalnız çağıran (test/ana) thread'e uygulanır. SDK diski ve ağı kendi arka plan
-  thread'inde yaptığından, o thread'deki disk/ağ işi bu testte yalnız süreç geneli `VmPolicy` ile
-  kapsanır; `ThreadPolicy` açısından arka plan thread'i KANITSIZDIR. Kanıtlanan: çağıran thread'de
-  (`initialize`, `setConsent`, `track`, `flush`) disk/ağ ihlali yok ve süreç genelinde `VmPolicy`
-  ihlali yok (ör. `ContextProvider`'daki `IncorrectContextUse` bu yolla yakalandı).
-- Bekleme: `track`'in SDK thread'inde kuyruğa yazılması `stats().queued` yoklamasıyla (10 sn zaman
+- `ThreadPolicy` yalnız çağıran (test/ana) thread'e uygulanır. Disk okuma/yazma ve ağ kategorileri
+  yalnız `ThreadPolicy`'de vardır; `VmPolicy` bunları yakalamaz. SDK diski ve ağı kendi arka plan
+  thread'inde yaptığından, **o thread'deki disk/ağ işi bu testte HİÇBİR politika tarafından kapsanmaz
+  (kanıtsızdır).**
+- Kanıtlanan: çağıran thread'de (`initialize`, `setConsent`, `track`, `flush`) `ThreadPolicy` ihlali yok;
+  süreç genelinde `VmPolicy`'nin yakaladığı kategorilerde (sızıntı, cleartext ağ, etiketlenmemiş soket,
+  `IncorrectContextUse` vb.) ihlal yok. `ContextProvider`'daki `IncorrectContextUse` bu yolla yakalandı.
+- Bekleme: `track`'in SDK thread'inde kuyruğa yazılması `stats().queued` yoklamasıyla (track öncesi değere göre artış, 10 sn zaman
   aşımı) deterministik beklenir. `flush`'ın ağ denemesinin bitişi için genel API'de tamamlanma sinyali
   yok (başarısız istekte `queued` değişmez; gerçek sunucu/cleartext `VmPolicy`'yi tetikler), bu yüzden
-  kalan 1 sn'lik sabit `Thread.sleep` bırakıldı; deterministik değildir.
+  kalan 1,5 sn'lik sabit `Thread.sleep` bırakıldı; deterministik değildir.
 
 ## Instrumented testler
 
