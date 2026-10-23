@@ -42,10 +42,12 @@ internal class Transport(endpoint: String, private val apiKey: String, path: Str
             }
             conn.outputStream.use { it.write(gz) }
             val code = conn.responseCode
-            val retryAfter = if (code == 429) parseRetryAfter(conn.getHeaderField("Retry-After")) else null
+            val outcome = map(code)
+            // bir-js: düşüş yolundaki (RETRY) her kodda Retry-After okunur (503 + Retry-After yaygın).
+            val retryAfter = if (outcome == Outcome.RETRY) parseRetryAfter(conn.getHeaderField("Retry-After")) else null
             // Bağlantı havuzda yeniden kullanılabilsin diye gövde (4xx/5xx'te errorStream) sonuna dek okunur.
             runCatching { (if (code >= 400) conn.errorStream else conn.inputStream)?.use { it.readBytes() } }
-            Response(map(code), retryAfter)
+            Response(outcome, retryAfter)
         } catch (e: IOException) {
             Response(Outcome.RETRY, null)
         } catch (e: RuntimeException) {
@@ -61,10 +63,8 @@ internal class Transport(endpoint: String, private val apiKey: String, path: Str
         code == 400 -> Outcome.DROP
         code == 401 || code == 403 -> Outcome.FATAL
         code == 413 -> Outcome.SPLIT
-        // Listede olmayanlar: geçici olabilecekler (408, 3xx, 5xx) kayıpsız RETRY; kalan 4xx istemci hatasıdır,
-        // tekrarı aynı yanıtı verir -> DROP (sonsuz döngü olmasın).
-        code == 408 || code == 429 || code in 300..399 || code >= 500 -> Outcome.RETRY
-        code in 400..499 -> Outcome.DROP
+        // bir-js ile birebir: 2xx/400/401/403/413 dışındaki HER ŞEY (429, 5xx, 3xx, 404, 422, 408 ...) retry.
+        // Geçici proxy/dağıtım hatalarında veri kaybolmaz; döngüyü üst katmandaki backoff sınırlar.
         else -> Outcome.RETRY
     }
 

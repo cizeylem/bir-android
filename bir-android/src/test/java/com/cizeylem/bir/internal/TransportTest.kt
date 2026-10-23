@@ -112,6 +112,20 @@ class TransportTest {
         assertEquals(7_000L, r.retryAfterMs)
     }
 
+    @Test fun `503 ile gelen Retry-After de okunur`() {
+        status = 503
+        headers = mapOf("Retry-After" to "7")
+        val r = transport().send("{}")
+        assertEquals(Outcome.RETRY, r.outcome)
+        assertEquals(7_000L, r.retryAfterMs)
+    }
+
+    @Test fun `RETRY olmayan yanitta Retry-After yok sayilir`() {
+        status = 400
+        headers = mapOf("Retry-After" to "7")
+        assertNull(transport().send("{}").retryAfterMs)
+    }
+
     @Test fun `Retry-After yoksa ya da cozulemezse null`() {
         status = 429
         assertNull(transport().send("{}").retryAfterMs)
@@ -143,11 +157,11 @@ class TransportTest {
         assertNull(r.retryAfterMs)
     }
 
-    @Test fun `listede olmayan kodlar veri kaybetmeden ya da dongusuz eslenir`() {
+    @Test fun `listede olmayan kodlar bir-js gibi RETRY eslenir`() {
         assertEquals(Outcome.RETRY, outcomeFor(408))
         assertEquals(Outcome.RETRY, outcomeFor(302))
-        assertEquals(Outcome.DROP, outcomeFor(404))
-        assertEquals(Outcome.DROP, outcomeFor(422))
+        assertEquals(Outcome.RETRY, outcomeFor(404))
+        assertEquals(Outcome.RETRY, outcomeFor(422))
     }
 
     @Test fun `govde gzip'li gider ve sunucuda acilinca ayni JSON cikar`() {
