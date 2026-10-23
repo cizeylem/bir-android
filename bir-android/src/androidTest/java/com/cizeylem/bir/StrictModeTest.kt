@@ -5,6 +5,7 @@ import android.os.StrictMode
 import androidx.test.core.app.ApplicationProvider
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -39,8 +40,14 @@ class StrictModeTest {
         Cizeylem.setConsent(Consent(analytics = true))
         Cizeylem.track("strictmode_denemesi", mapOf("n" to 1))
         Cizeylem.flush()
-        // SDK thread'inin işi bitsin (ana thread'i bloklamadan çağrılar anında dönmüş olmalı).
-        Thread.sleep(1500)
+        // Deterministik kısım: track'in SDK thread'inde kuyruğa yazıldığı (disk işi) yoklanarak beklenir.
+        val bitis = System.currentTimeMillis() + 10_000
+        while (Cizeylem.stats().queued < 1 && System.currentTimeMillis() < bitis) Thread.sleep(20)
+        assertTrue("track SDK thread'inde kuyruğa yazılmadı", Cizeylem.stats().queued >= 1)
+        // flush'ın ağ denemesinin bitişi gözlenemez (kapalı porta giden istek başarısız olunca event kuyrukta
+        // kalır, yani queued değişmez; genel API'de tamamlanma sinyali yok). Bu yüzden kısa, sabit bir pay
+        // bırakılır; ihlal olursa süreç ölür ve enstrümantasyon düşer.
+        Thread.sleep(1000)
         assertEquals(false, Cizeylem.stats().disabled)
     }
 }

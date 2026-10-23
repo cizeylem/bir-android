@@ -37,6 +37,18 @@ API 21+ olduğundan alt sınırı yükseltmek kazanç değil, kapsam kaybı olur
   açıldı, deep link ile yeniden açıldı; süreç ölmedi. Düğmelere dokunuş ve rıza anahtarları EL İLE
   denenmedi (UI otomasyonu yok); bu yollar `StrictModeTest` ile kapsanıyor.
 
+### StrictModeTest kanıtının kapsamı (neyin kanıtlandığı, neyin kanıtlanmadığı)
+
+- `ThreadPolicy` yalnız çağıran (test/ana) thread'e uygulanır. SDK diski ve ağı kendi arka plan
+  thread'inde yaptığından, o thread'deki disk/ağ işi bu testte yalnız süreç geneli `VmPolicy` ile
+  kapsanır; `ThreadPolicy` açısından arka plan thread'i KANITSIZDIR. Kanıtlanan: çağıran thread'de
+  (`initialize`, `setConsent`, `track`, `flush`) disk/ağ ihlali yok ve süreç genelinde `VmPolicy`
+  ihlali yok (ör. `ContextProvider`'daki `IncorrectContextUse` bu yolla yakalandı).
+- Bekleme: `track`'in SDK thread'inde kuyruğa yazılması `stats().queued` yoklamasıyla (10 sn zaman
+  aşımı) deterministik beklenir. `flush`'ın ağ denemesinin bitişi için genel API'de tamamlanma sinyali
+  yok (başarısız istekte `queued` değişmez; gerçek sunucu/cleartext `VmPolicy`'yi tetikler), bu yüzden
+  kalan 1 sn'lik sabit `Thread.sleep` bırakıldı; deterministik değildir.
+
 ## Instrumented testler
 
 - Cihaz: Android emülatörü, API 36 (`google/sdk_gphone16k_arm64`, 16 KB sayfa imajı), arm64.
