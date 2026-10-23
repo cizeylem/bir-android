@@ -57,7 +57,7 @@ thread'inde yaptığı için, o thread'deki işin kapsamı kategoriye göre değ
 `IncorrectContextUse` bu yolla yakalandı.
 
 - Bekleme: `track`'in SDK thread'inde kuyruğa yazılması `stats().queued` yoklamasıyla (10 sn zaman aşımı; test önce rızayı kapatıp kalıcı kuyruğu sildiği için `queued >= 1` bu track'in yazdığı satırdır) deterministik beklenir. `flush`'ın ağ denemesinin bitişi için genel API'de tamamlanma sinyali
-  yok (başarısız istekte `queued` değişmez; gerçek sunucu/cleartext `VmPolicy`'yi tetikler), bu yüzden
+  yok (başarısız istekte `queued` değişmez; test kapalı bir porta gittiği için gerçek ağ alışverişi olmaz; cleartext kategorisi gerçek bir cleartext isteğinde tetiklenirdi), bu yüzden
   kalan 1,5 sn'lik sabit `Thread.sleep` bırakıldı; deterministik değildir.
 
 ## Instrumented testler

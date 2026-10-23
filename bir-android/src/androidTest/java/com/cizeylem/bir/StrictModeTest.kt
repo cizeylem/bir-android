@@ -40,6 +40,10 @@ class StrictModeTest {
         // Rıza kapatma kalıcı kuyruğu SİLER ve SDK thread'inde sıralı çalışır: bundan sonraki queued >= 1,
         // önceki koşudan kalan satır değil, bu track'in yazdığı satırdır.
         Cizeylem.setConsent(Consent())
+        // stats() bayat önbellek okuyabilir; silme görevi çalışıp önbellek tazelenene kadar beklenir.
+        val sifirBitis = System.currentTimeMillis() + 10_000
+        while (Cizeylem.stats().queued != 0 && System.currentTimeMillis() < sifirBitis) Thread.sleep(20)
+        assertEquals("kuyruk sıfırlanmadı", 0, Cizeylem.stats().queued)
         Cizeylem.setConsent(Consent(analytics = true))
         Cizeylem.track("strictmode_denemesi", mapOf("n" to 1))
         Cizeylem.flush()
