@@ -15,7 +15,7 @@ import java.io.IOException
  * görüldü" demektir; yeniden kurulumda noBackupFilesDir silindiği için kurulum yeniden sayılır (device_id ile tutarlı).
  *
  * `existingInstall` dışarıdan gelir: Amplitude devralma sonucunu bilen facade'dir, bu sınıf devralma zincirine girmez.
- * Rıza kapısı da facade'in `onEvent`'indedir; burada event her koşulda üretilir.
+ * Rıza kapısı burada yok: facade, `analytics` rızası yokken tracker'ı hiç kurmaz; `onEvent`'te kapı bulunmaz.
  *
  * Tek iş parçacığı varsayımı: Activity callback'leri ana thread'de gelir, sayaç kilitsizdir.
  */
@@ -25,21 +25,39 @@ internal class LifecycleTracker(
     private val existingInstall: Boolean,
     private val onEvent: (String, Map<String, Any?>) -> Unit,
     private val onBackground: () -> Unit,
+    private val now: () -> Long = { System.currentTimeMillis() },
 ) : Application.ActivityLifecycleCallbacks {
 
     private var started = 0
-    // Ekran dönmesinde eski Activity yeni olan başlamadan durur: sayaç 1→0→1 olur. Bunu arka plan saymamak için
-    // sayaç 0'a yapılandırma değişikliği yüzünden indiyse bayrak kalkar ve sonraki 0→1 "açılış" sayılmaz.
-    private var configChangePending = false
+    // Ekran dönmesinde eski Activity yeni olan başlamadan durur: sayaç 1→0→1 olur. Sayaç yapılandırma değişikliği
+    // yüzünden 0'a inerse zaman damgası tutulur; CONFIG_WINDOW_MS içinde gelen 0→1 dönme sayılır, "açılış" üretilmez.
+    // Bayrak yerine damga: yeni Activity hiç gelmezse (kullanıcı o sırada Home'a bastı) damga eskir ve sonraki gerçek
+    // ön plana geçiş yutulmaz. Bedeli: o durumda cz_app_backgrounded kaçar; flush 30 sn'lik zamanlayıcıyla da tetiklenir.
+    private var configStopAt: Long? = null
+    private var registered = false
+    // Durum yazımı başarısızsa bu süreçte kurulum/güncelleme event'ini tekrarlamayız. Süreçler arası tekrarı
+    // (yazma kalıcı olarak başarısızsa her açılışta) önleyemeyiz; kalıcılık yokken yapılacak bir şey yok.
+    private var writeFailed = false
 
     /**
      * Süreç başına bir kez çağrılır. Kurulum/güncelleme kontrolünü burada yapar; ilk Activity'den ÖNCE çalıştığı için
      * sıralama kendiliğinden `installed` → `opened` olur: ilk açılış hem kurulum hem açılıştır, ve kurulum açılışın
      * nedeni olduğundan önce gelir (panelde "kurulumdan sonra ilk açılış" doğal sırayla okunur).
+     *
+     * SÖZLEŞME: `Application.onCreate` içinde, ilk Activity başlamadan ÖNCE çağrılmalıdır. Geç çağrılırsa ilk
+     * `cz_app_opened` kaçar ve sayaç yanlış kalır (çalışan Activity'yi görmediği için 1→0 geçişi hiç oluşmaz).
      */
     fun register() {
+        if (!registered) {
+            registered = true
+            app.registerActivityLifecycleCallbacks(this)
+        }
         checkInstallOrUpdate()
-        app.registerActivityLifecycleCallbacks(this)
+    }
+
+    // Facade'den gelen istisna uygulamanın Activity callback'inde çökmeye gitmemeli.
+    private fun emit(name: String, props: Map<String, Any?>) {
+        try { onEvent(name, props) } catch (_: RuntimeException) {}
     }
 
     internal data class State(val version: String, val build: Long)
@@ -67,23 +85,26 @@ internal class LifecycleTracker(
     }
 
     private fun checkInstallOrUpdate() {
+        if (writeFailed) return
         val current = currentVersion() ?: return // Sürüm okunamıyorsa yanlış event üretmektense sessiz kal.
         val existed = stateFile.isFile
         val previous = readState()
         when {
-            !existed -> onEvent("cz_app_installed", mapOf("existing_install" to existingInstall))
+            !existed -> emit("cz_app_installed", mapOf("existing_install" to existingInstall))
             // Bozuk dosya: kurulum zaten görülmüş, sürümü bilmiyoruz. Ne installed ne updated; yalnız onar.
             previous == null -> Unit
-            previous != current -> onEvent(
+            previous != current -> emit(
                 "cz_app_updated",
                 mapOf("previous_version" to previous.version, "previous_build" to previous.build),
             )
             else -> return
         }
-        // Yazma başarısızsa bir sonraki açılışta event tekrarlanabilir; kalıcılık yokken yapılacak bir şey yok.
         try {
             atomicWrite(stateFile, "version=${current.version}\nbuild=${current.build}\n".toByteArray(Charsets.UTF_8))
         } catch (_: IOException) {
+            writeFailed = true
+        } catch (_: RuntimeException) { // SecurityException dahil
+            writeFailed = true
         }
     }
 
@@ -99,19 +120,27 @@ internal class LifecycleTracker(
 
     override fun onActivityStarted(activity: Activity) {
         if (++started == 1) {
-            if (configChangePending) configChangePending = false else onEvent("cz_app_opened", emptyMap())
+            val stop = configStopAt
+            configStopAt = null // her durumda temizlenir, takılı kalmaz
+            val rotation = stop != null && now() - stop <= CONFIG_WINDOW_MS
+            if (!rotation) emit("cz_app_opened", emptyMap())
         }
     }
 
     override fun onActivityStopped(activity: Activity) {
         if (started > 0 && --started == 0) {
             if (activity.isChangingConfigurations) {
-                configChangePending = true
+                configStopAt = now()
             } else {
-                onEvent("cz_app_backgrounded", emptyMap())
-                onBackground()
+                configStopAt = null
+                emit("cz_app_backgrounded", emptyMap())
+                try { onBackground() } catch (_: RuntimeException) {}
             }
         }
+    }
+
+    private companion object {
+        const val CONFIG_WINDOW_MS = 1000L
     }
 
     override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit

@@ -46,9 +46,21 @@ class LifecycleTrackerTest {
         info.longVersionCode = code
     }
 
+    private var clock = 1_000_000L
+
+    private fun newTracker(
+        existing: Boolean = false,
+        into: MutableList<Pair<String, Map<String, Any?>>> = events,
+        file: File = stateFile(),
+    ) = LifecycleTracker(app, file, existing, { n, p -> into.add(n to p) }, { backgrounds++ }, { clock })
+
     private fun tracker(existing: Boolean = false, into: MutableList<Pair<String, Map<String, Any?>>> = events) =
-        LifecycleTracker(app, stateFile(), existing, { n, p -> into.add(n to p) }, { backgrounds++ })
-            .also { it.register() }
+        newTracker(existing, into).also { it.register() }
+
+    // Yapılandırma değişikliğiyle duruyormuş gibi davranan Activity: yenisi hiç gelmeyen durumu taklit eder.
+    class ConfigStopActivity : Activity() {
+        override fun isChangingConfigurations() = true
+    }
 
     private fun names() = events.map { it.first }
     private fun prop(name: String) = events.first { it.first == name }.second
@@ -145,5 +157,30 @@ class LifecycleTrackerTest {
         val t = LifecycleTracker(app, File(dir, "yok/cizeylem/state"), false, { _, _ -> }, {})
         assertNull(t.readState())
         assertFalse(File(dir, "yok").exists())
+    }
+
+    @Test fun `donme sonrasi yeni Activity gelmeden gercek arka plan ve on plan opened yutmaz`() {
+        tracker()
+        events.clear()
+        val a = Robolectric.buildActivity(ConfigStopActivity::class.java).create().start().resume()
+        a.pause().stop() // dönme gibi durdu, ama yenisi gelmedi
+        clock += 5_000 // pencere (1 sn) geçti: kullanıcı gerçekten ayrıldı
+        Robolectric.buildActivity(Activity::class.java).create().start().resume()
+        assertEquals(listOf("cz_app_opened", "cz_app_opened"), names())
+    }
+
+    @Test fun `yazilamaz durum dosyasiyla register cokmez ve ikinci register installed tekrarlamaz`() {
+        // Üst "dizin" düz dosya: mkdirs başarısız olur, atomicWrite IOException atar.
+        val blocker = File(dir, "blok").apply { writeText("x") }
+        val t = newTracker(file = File(blocker, "state"))
+        t.register()
+        t.register()
+        assertEquals(listOf("cz_app_installed"), names())
+    }
+
+    @Test fun `onEvent ve onBackground istisnasi Activity callback'ine sizmaz`() {
+        val t = LifecycleTracker(app, stateFile(), false, { _, _ -> error("x") }, { error("y") }, { clock })
+        t.register()
+        Robolectric.buildActivity(Activity::class.java).create().start().resume().pause().stop()
     }
 }
