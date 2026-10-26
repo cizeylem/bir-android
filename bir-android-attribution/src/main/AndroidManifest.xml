@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- installreferrer-2.2 AAR manifest'inde de aynı izin var; bindService'te SecurityException'ı önler. -->
+    <uses-permission android:name="com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE" />
+
+    <!--
+      Android 11+ paket görünürlüğü. AAR'ın targetSdk'sı 22 olduğundan kendi manifest'inde <queries> yoktu;
+      bizde var, çünkü görünürlük yoksa queryIntentServices boş döner ve referrer sessizce hiç okunmaz.
+      Görev 13 Meta uygulamaları (katana/instagram/lite) için buraya kendi <package> girdilerini ekler.
+    -->
+    <queries>
+        <package android:name="com.android.vending" />
+        <intent>
+            <action android:name="com.google.android.finsky.BIND_GET_INSTALL_REFERRER_SERVICE" />
+        </intent>
+    </queries>
+</manifest>

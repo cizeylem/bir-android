@@ -15,5 +15,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "bir-android"
 include(":bir-android")
+include(":bir-android-attribution")
 include(":samples:phone")
 include(":samples:tv")
