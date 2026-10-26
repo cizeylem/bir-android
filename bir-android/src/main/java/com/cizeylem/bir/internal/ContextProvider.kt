@@ -1,6 +1,7 @@
 package com.cizeylem.bir.internal
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
@@ -87,6 +88,9 @@ internal class ContextProvider(app: Context, private val libVersion: String) {
     }
 
     /** İzin yoksa null: kütüphane izni manifest'inde zorlamaz, ana uygulama verirse okunur. */
+    // Lint MissingPermission yanlış pozitifi: izin aşağıda çalışma anında denetleniyor. checkSelfPermission
+    // API 23 olduğundan minSdk 21 için 3 argümanlı checkPermission kullanılıyor; lint bu kalıbı tanımıyor.
+    @SuppressLint("MissingPermission")
     @Suppress("DEPRECATION")
     private fun networkType(): String? = try {
         if (app.checkPermission(Manifest.permission.ACCESS_NETWORK_STATE, Process.myPid(), Process.myUid()) !=

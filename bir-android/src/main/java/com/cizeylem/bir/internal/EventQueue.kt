@@ -97,7 +97,9 @@ internal class EventQueue(
 
     private fun rewrite(lines: List<String>) {
         tmp.outputStream().use { out ->
-            lines.forEach { out.write((it + "\n").toByteArray(UTF_8)) }
+            // Düz döngü: lint `NewApi` yanlış pozitifi (Iterable.forEach API 24 sanıyordu; bytecode'da
+            // API 24 çağrısı yok, Kotlin inline forEach'ti). Çözümleme belirsizliği baştan kalksın diye.
+            for (line in lines) out.write((line + "\n").toByteArray(UTF_8))
             // Rename'den önce diske indir; aksi halde çökmede boş dosya kalabilir.
             out.flush()
             out.fd.sync()
