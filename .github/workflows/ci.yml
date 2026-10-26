@@ -26,6 +26,11 @@ jobs:
       - name: Birim testler ve lint
         run: ./gradlew --console=plain :bir-android:testDebugUnitTest :bir-android-attribution:testDebugUnitTest lint
 
+      # JavaApiTest.java'nın DERLENMESİ testin kendisidir: SPEC §1'in "Java'dan çağrılabilir API"
+      # garantisi buna dayanır. Cihaz yok, bu yüzden yalnız derlenir, çalıştırılmaz.
+      - name: androidTest kümesini derle (Java API yüzeyi)
+        run: ./gradlew --console=plain :bir-android:assembleDebugAndroidTest
+
       # Çekirdek AAR 150 KB'ı (SPEC §1) aşarsa betik 1 ile çıkar.
       - name: AAR boyut kapısı
         run: ./scripts/measure-aar.sh
