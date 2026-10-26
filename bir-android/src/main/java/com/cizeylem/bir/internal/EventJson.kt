@@ -62,6 +62,24 @@ internal object EventJson {
         return Batch(JSONObject().put("sent_at", sentAt).put("events", arr).toString(), skipped)
     }
 
+    /**
+     * Kimliksiz attribution gövdesi (SPEC §7): düz bir nesne, `sent_at` + ham alanlar.
+     *
+     * Kimlik alanları BURADA da süzülür: sunucu gövdede kimlik görürse 400 döner ve sinyal tamamen
+     * kaybolur. Süzme çağıranın dikkatine bırakılamayacak kadar kritik, bu yüzden son kapı burasıdır.
+     */
+    fun attributionAnon(sentAt: Long, fields: Map<String, Any?>): String {
+        val o = JSONObject()
+        o.put("sent_at", sentAt)
+        for ((k, v) in fields) {
+            if (k in IDENTITY_KEYS) continue
+            o.put(k, wrap(v))
+        }
+        return o.toString()
+    }
+
+    private val IDENTITY_KEYS = setOf("device_id", "user_id", "distinct_id")
+
     private fun obj(m: Map<String, Any?>): JSONObject {
         val o = JSONObject()
         // put(k, null) anahtarı siler; açık null için JSONObject.NULL gerekir.

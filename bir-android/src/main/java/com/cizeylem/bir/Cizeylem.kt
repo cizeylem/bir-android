@@ -17,7 +17,7 @@ import java.util.UUID
  *
  * `@JvmStatic` + `@JvmOverloads`: Java'dan `Cizeylem.track("ad")` biçiminde çağrılabilir (SPEC §1).
  */
-object Cizeylem {
+object Cizeylem : AttributionSink {
 
     @Volatile private var core: Core? = null
 
@@ -131,6 +131,27 @@ object Cizeylem {
 
     @JvmStatic
     fun stats(): Stats = core?.stats() ?: Stats(0, 0, 0, false)
+
+    // --- AttributionSink (attribution modülünün kapısı) -------------------------------------------
+
+    /**
+     * Attribution modülü işini buradan başlatır: iş çekirdeğin thread'inde, rıza okunduktan sonra çalışır.
+     * `initialize` çağrılmamışsa HİÇ çalışmaz — gidecek yer yokken sinyal toplamak, "okundu" işaretini
+     * boşa yakardı.
+     */
+    override fun withConsent(task: (Consent) -> Unit) {
+        core?.withConsent(task)
+    }
+
+    /** Alanlar `cz_attribution` event'i olarak normal kuyruğa girer (kimlikli, `/v1/batch`). */
+    override fun sendIdentified(fields: Map<String, Any?>) {
+        core?.sendAttributionIdentified(fields)
+    }
+
+    /** Alanlar `/v1/attribution/anon`'a gider; gövdede `device_id`/`user_id` bulunmaz. */
+    override fun sendAnonymous(fields: Map<String, Any?>) {
+        core?.sendAttributionAnonymous(fields)
+    }
 
     // --- testler için ------------------------------------------------------------------------------
 

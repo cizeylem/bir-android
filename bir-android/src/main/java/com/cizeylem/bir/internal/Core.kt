@@ -33,6 +33,9 @@ internal class Core(
     private val mainPoster: (() -> Unit) -> Unit,
     private val sender: ((String) -> Response)? = null,
     private val random: () -> Double = { Math.random() },
+    // Kimliksiz attribution ucu ayrı bir gönderici: aynı Transport sınıfı, farklı `path`. Testler HTTP'siz
+    // sahte verebilsin diye fonksiyon olarak alınır (batch göndericisiyle aynı gerekçe).
+    private val anonSender: ((String) -> Response)? = null,
 ) : Application.ActivityLifecycleCallbacks {
 
     // --- iki thread'den okunanlar ---------------------------------------------------------------
@@ -228,6 +231,63 @@ internal class Core(
     fun getDistinctId(): String? = distinctIdCache
 
     fun stats(): Stats = statsCache
+
+    // --- attribution modülünün kapısı (AttributionSink) ------------------------------------------
+
+    /**
+     * Rızayı çekirdek thread'inde, bootstrap'tan SONRA verir. Attribution modülünün tek tetikleyicisi budur.
+     */
+    fun withConsent(task: (Consent) -> Unit) {
+        scheduler.post {
+            if (!booted) bootstrap()
+            task(consent)
+        }
+    }
+
+    /**
+     * Kimlikli attribution: alanlar normal event boru hattına `cz_attribution` olarak girer; böylece
+     * `device_id`/`user_id`, context, kuyruk kalıcılığı ve backoff'lu tekrar bedavaya gelir.
+     *
+     * `analytics` o an kapalıysa kuyruk ve kimlik yoktur: sinyali sessizce düşürmek yerine kimliksiz uca
+     * düşülür (rıza kademesi zaten modülde denetlendi; burası yarış durumuna karşı son savunma).
+     */
+    fun sendAttributionIdentified(fields: Map<String, Any?>) {
+        val time = now()
+        val snapshot = LinkedHashMap(fields)
+        scheduler.post {
+            if (ready() && queue != null) {
+                write(ATTRIBUTION, time, uuid(), snapshot, null, null)
+            } else {
+                postAnonymous(time, snapshot)
+            }
+        }
+    }
+
+    /** Kimliksiz attribution: `/v1/attribution/anon`, gövdede hiçbir kimlik alanı yok (SPEC §7). */
+    fun sendAttributionAnonymous(fields: Map<String, Any?>) {
+        val time = now()
+        val snapshot = LinkedHashMap(fields)
+        scheduler.post { postAnonymous(time, snapshot) }
+    }
+
+    /**
+     * Kuyruk YOK: rızasız kalıcı iz bırakamayız (SPEC §5), bu yüzden tek deneme. Başarısızlık duyurulur;
+     * sinyal yeniden denenmez — modül işaretini yalnız gönderim denendikten sonra yazar, ama diskte
+     * bekleyen bir kopya tutmak rızasız kalıcı iz olurdu.
+     */
+    private fun postAnonymous(sentAt: Long, fields: Map<String, Any?>) {
+        if (fields.isEmpty()) return
+        if (!booted) bootstrap()
+        val send = anonSender ?: Transport(config.endpoint, config.writeKey, ANON_PATH)::send
+        val body = EventJson.attributionAnon(sentAt, fields)
+        val res = try {
+            send(body)
+        } catch (e: RuntimeException) {
+            warn("kimliksiz attribution gönderilemedi: $e")
+            return
+        }
+        if (res.outcome != Outcome.OK) warn("kimliksiz attribution reddedildi: ${res.outcome}")
+    }
 
     // --- kurulum ---------------------------------------------------------------------------------
 
@@ -621,6 +681,8 @@ internal class Core(
         const val USER_ID_FILE = "user_id"
         const val IDENTIFY = "\$identify"
         const val DEEP_LINK = "cz_deep_link_opened"
+        const val ATTRIBUTION = "cz_attribution"
+        const val ANON_PATH = "/v1/attribution/anon"
         const val LIB_VERSION = "0.1.0"
         val EMPTY_STATS = Stats(0, 0, 0, false)
     }
