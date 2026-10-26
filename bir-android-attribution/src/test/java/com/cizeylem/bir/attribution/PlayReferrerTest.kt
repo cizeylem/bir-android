@@ -56,15 +56,20 @@ class PlayReferrerTest {
         var bindThread: Thread? = null
         var unbound = 0
         var pmThrows: RuntimeException? = null
+        @Volatile var onBind: () -> Unit = {}
+        /** Gerçek Context gibi: bind kaydı bindService'in DÖNÜŞÜNDE oluşur; öncesindeki unbind etkisizdir. */
+        @Volatile var live = false
         override fun getPackageManager(): android.content.pm.PackageManager { pmThrows?.let { throw it }; return super.getPackageManager() }
         override fun getApplicationContext(): Context = this
         override fun bindService(service: Intent, c: ServiceConnection, flags: Int): Boolean {
             bindThread = Thread.currentThread()
             bindThrows?.let { throw it }
+            onBind()
             boundIntent = service; boundFlags = flags; conn = c
+            live = bindResult
             return bindResult
         }
-        override fun unbindService(c: ServiceConnection) { unbound++ }
+        override fun unbindService(c: ServiceConnection) { unbound++; live = false }
     }
 
     @Before fun setUp() {
@@ -378,5 +383,32 @@ class PlayReferrerTest {
         dc.await()
         assertEquals("test-timer", ok.cbThread.get().name)
         assertEquals("test-timer", dc.cbThread.get().name)
+    }
+
+    @Test fun `zaman asimi markDone'dan hemen once ates ederse isaret ve callback tutarli kalir`() {
+        installPlay()
+        val calls = java.util.concurrent.atomic.AtomicInteger()
+        val r = Result()
+        // noBackupDir ikinci kez markDone için çözülür (kontrol geçildikten sonra): orada zaman aşımını geçirt.
+        reader(timeoutMs = 150, noBackup = { if (calls.incrementAndGet() >= 2) Thread.sleep(500); dir }).read(r.cb)
+        waitBound()
+        ctx.conn!!.onServiceConnected(ComponentName("a", "b"), FakeService(fullBundle()))
+        val got = r.await()
+        Thread.sleep(700) // markDone'ın bitmesini bekle
+        // Değişmez: işaret yazıldıysa referrer teslim edilmiş olmalı (aksi halde atıf kalıcı kaybolur).
+        assertEquals("işaret ile teslim tutarsız", AttributionState(dir).isDone("play_referrer"), got != null)
+        assertEquals(1, r.calls.get())
+    }
+
+    @Test fun `bind sonrasi gec zaman asimi baglantiyi birakir`() {
+        installPlay()
+        val r = Result()
+        // bindService dönmeden zaman aşımı ateşlenir: bağlantı yine de bırakılmalı.
+        ctx.onBind = { Thread.sleep(400) } // kayıt (live) bu uyku BİTİNCE oluşur
+        reader(timeoutMs = 100).read(r.cb)
+        assertNull(r.await())
+        waitBound() // bindService artık döndü (kayıt oluştu)
+        Thread.sleep(300)
+        assertFalse("bağlantı sızdı", ctx.live)
     }
 }

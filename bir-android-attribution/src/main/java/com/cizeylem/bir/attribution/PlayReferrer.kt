@@ -112,7 +112,13 @@ internal class PlayReferrerReader(
             } catch (e: SecurityException) { // PERMISSION_ERROR
                 false
             }
-            if (!bound) finish(null) // SERVICE_UNAVAILABLE: bağlanma engelli
+            if (!bound) {
+                finish(null) // SERVICE_UNAVAILABLE: bağlanma engelli
+            } else if (finished.get()) {
+                // bindService dönene kadar zaman aşımı/kopma bitirdi: o finish'in unbind'ı henüz kayıtlı olmayan
+                // bağlantıya denk geldi ve etkisizdi; bağlantı burada bırakılmazsa sızar.
+                try { context.unbindService(this) } catch (e: RuntimeException) { }
+            }
         }
 
         @Suppress("DEPRECATION") // versionCode: kütüphane de int sürüm kodunu karşılaştırır (80837300 = Play 8.3.73).
@@ -156,11 +162,12 @@ internal class PlayReferrerReader(
                 @Suppress("DEPRECATION") // tip belirsiz get(): değer olduğu gibi (ham) taşınır
                 if (reply.containsKey(key)) fields[key] = reply.get(key)
             }
-            // Zaman aşımı araya girip çoktan bitirdiyse işaret YAZILMAZ: callback null aldı, referrer kullanılmadı.
-            if (finished.get()) return
+            // Sahipliği ÖNCE al, sonra işareti yaz: kontrol-sonra-yaz penceresinde zaman aşımı callback'e null verip
+            // işareti "okundu" bırakırdı ve referrer bir daha hiç okunmazdı. Kaybeden hiçbir şey yazmaz.
+            if (!finished.compareAndSet(false, true)) return
             // Yazılamayan işaret referrer'ı atmak için sebep değil: göndermek, bir kez daha okumaktan iyidir.
             try { AttributionState(noBackupDir()).markDone(KEY_DONE) } catch (e: IOException) { }
-            finish(fields)
+            complete(fields)
         }
 
         /**
@@ -185,6 +192,11 @@ internal class PlayReferrerReader(
 
         fun finish(result: Map<String, Any?>?) {
             if (!finished.compareAndSet(false, true)) return
+            complete(result)
+        }
+
+        /** Sahiplenmiş (finished = true) çağıranlar için: temizlik ve teslim. */
+        private fun complete(result: Map<String, Any?>?) {
             timeout?.cancel(false)
             // Her zaman unbind dene (bound bayrağına güvenme); bağlı değilse atılan istisna yutulur.
             if (bindAttempted) {
