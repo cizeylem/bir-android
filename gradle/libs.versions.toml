@@ -8,6 +8,7 @@ androidx-test-ext = "1.2.1"
 compose-bom = "2025.09.00"
 activity-compose = "1.10.1"
 leanback = "1.0.0"
+maven-publish = "0.37.0"
 
 [libraries]
 junit = { module = "junit:junit", version.ref = "junit" }
@@ -25,3 +26,4 @@ android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+maven-publish = { id = "com.vanniktech.maven.publish", version.ref = "maven-publish" }

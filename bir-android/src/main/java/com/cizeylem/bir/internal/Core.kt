@@ -3,6 +3,7 @@ package com.cizeylem.bir.internal
 import android.app.Activity
 import android.app.Application
 import android.os.Bundle
+import com.cizeylem.bir.BuildConfig
 import com.cizeylem.bir.Configuration
 import com.cizeylem.bir.Consent
 import com.cizeylem.bir.Stats
@@ -376,7 +377,7 @@ internal class Core(
         val send = sender ?: Transport(config.endpoint, config.writeKey)::send
         // Backoff monotonik saatle, `sent_at` duvar saatiyle: ikisi aynı kaynaktan gelemez.
         dispatcher = Dispatcher(q, send, elapsed, random, wallClock = now, warn = ::warn)
-        contextProvider = ContextProvider(app, LIB_VERSION)
+        contextProvider = ContextProvider(app, BuildConfig.LIB_VERSION)
         val once = LinkedHashMap<String, Any?>()
         // Devralma izi: panelde "Amplitude'dan gelen kullanıcı" kırılımı (SPEC §6).
         migratedFrom?.let { once["migrated_from"] = it }
@@ -700,7 +701,6 @@ internal class Core(
         const val DEEP_LINK = "cz_deep_link_opened"
         const val ATTRIBUTION = "cz_attribution"
         const val ANON_PATH = "/v1/attribution/anon"
-        const val LIB_VERSION = "0.1.0"
         val EMPTY_STATS = Stats(0, 0, 0, false)
     }
 }

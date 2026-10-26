@@ -1,0 +1,49 @@
+# Yayın: `android-v*` tag'i push edilince Maven Central Portal'a yükler.
+# Sırlar yalnız repo secrets'tan okunur; koda yazılmaz. Ayrıntı: docs/RELEASE.md
+name: Maven Central yayını
+
+on:
+  push:
+    tags:
+      - 'android-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Tag (android-v1.2.3) ile gradle.properties'teki VERSION_NAME aynı olmalı;
+      # yoksa Central'a bir sürüm, context.lib_version'a başka sürüm girer.
+      - name: Tag ile VERSION_NAME eşleşmesini doğrula
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#android-v}"
+          FILE_VERSION="$(sed -n 's/^VERSION_NAME=//p' gradle.properties)"
+          if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+            echo "Tag sürümü ($TAG_VERSION) gradle.properties VERSION_NAME ($FILE_VERSION) ile eşleşmiyor." >&2
+            exit 1
+          fi
+
+      - name: Testler ve AAR boyut sınırı
+        run: |
+          ./gradlew --no-daemon :bir-android:testDebugUnitTest :bir-android-attribution:testDebugUnitTest
+          ./scripts/measure-aar.sh
+
+      - name: Central Portal'a yayınla
+        run: ./gradlew --no-daemon :bir-android:publishToMavenCentral :bir-android-attribution:publishToMavenCentral
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_IN_MEMORY_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}

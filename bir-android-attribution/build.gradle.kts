@@ -1,6 +1,9 @@
+import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
+
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.maven.publish)
 }
 
 android {
@@ -34,4 +37,45 @@ dependencies {
     implementation(project(":bir-android"))
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
+}
+
+// Yayın: Maven Central Portal (vanniktech). Sürüm ve grup gradle.properties'ten gelir.
+group = providers.gradleProperty("GROUP").get()
+version = providers.gradleProperty("VERSION_NAME").get()
+
+mavenPublishing {
+    configure(AndroidSingleVariantLibrary(variant = "release", sourcesJar = true, publishJavadocJar = true))
+    publishToMavenCentral()
+    // İmza yalnız anahtar verilmişse (CI: ORG_GRADLE_PROJECT_signingInMemoryKey). Yerelde anahtar yoktur;
+    // publishToMavenLocal imzasız geçer. Central imzasız yüklemeyi zaten reddeder.
+    if (providers.gradleProperty("signingInMemoryKey").isPresent) {
+        signAllPublications()
+    }
+    coordinates(group.toString(), "bir-android-attribution", version.toString())
+
+    pom {
+        name.set("bir-android-attribution")
+        description.set("Çizeylem Android SDK için attribution eklentisi: Play ve Meta referrer, GAID, mağaza kaynağı.")
+        inceptionYear.set("2026")
+        url.set("https://github.com/cizeylem/bir-android")
+        licenses {
+            license {
+                name.set("The Apache License, Version 2.0")
+                url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                distribution.set("repo")
+            }
+        }
+        developers {
+            developer {
+                id.set("cizeylem")
+                name.set("Çizeylem")
+                url.set("https://github.com/cizeylem")
+            }
+        }
+        scm {
+            url.set("https://github.com/cizeylem/bir-android")
+            connection.set("scm:git:git://github.com/cizeylem/bir-android.git")
+            developerConnection.set("scm:git:ssh://git@github.com/cizeylem/bir-android.git")
+        }
+    }
 }
