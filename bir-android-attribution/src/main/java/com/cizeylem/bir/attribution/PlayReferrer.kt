@@ -10,32 +10,11 @@ import android.os.Parcel
 import android.os.RemoteException
 import java.io.File
 import java.io.IOException
-import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-
-/**
- * Genel kapı: ilk açılışta bir kez okur. İki daemon thread, tembel: `cizeylem-referrer` (disk + Binder, bloklayabilir)
- * ve `cizeylem-referrer-cb` (zaman aşımı + callback teslimi; Binder'a hiç dokunmaz).
- * (Executor sahipliği Görev 14'te Cizeylem ile birleştirilecek.)
- */
-internal object PlayReferrer {
-    private fun daemon(name: String) = Executors.newSingleThreadScheduledExecutor { r ->
-        Thread(r, name).apply { isDaemon = true; priority = Thread.MIN_PRIORITY }
-    }
-
-    private val worker by lazy { daemon("cizeylem-referrer") }
-    private val timer by lazy { daemon("cizeylem-referrer-cb") }
-
-    fun read(context: Context, callback: (Map<String, Any?>?) -> Unit) {
-        val app = context.applicationContext ?: context
-        // noBackupFilesDir çağıranın thread'inde ÇÖZÜLMEZ: ilk çağrıda dizin yaratır (disk G/Ç, ana thread'de StrictMode).
-        PlayReferrerReader(app, { app.noBackupFilesDir }, worker, timer).read(callback)
-    }
-}
 
 /**
  * Google Play Install Referrer'ı `installreferrer` kütüphanesi OLMADAN okur (SPEC §7).
