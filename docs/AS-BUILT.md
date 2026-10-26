@@ -173,3 +173,14 @@ denenmedi.
 - TV örneği (`samples/tv`) derlendi, ÇALIŞTIRILMADI: TV AVD'si yok.
 - Gerçek cihaz yok; yalnız emülatör.
 - Canlı sunucuya gönderim yok (write key / test projesi yok, SPEC §9).
+- **AÇIK MADDE (S5):** `bir-js/spec/` ortak test seti henüz yok (SPEC §9), bu yüzden `spec-adapter` yazılmadı ve SPEC §8'deki "spec adaptörü yeşil" kriteri karşılanmadı; yerine birim testler var. Plan: `docs/RELEASE.md` "S5 geldiğinde".
+- **AÇIK MADDE (lint):** `./gradlew lint` çekirdekte 4 hata veriyor (aşağıda "Lint"), bu yüzden `ci.yml` bu haliyle `dogrula` işinde kırmızı olur.
+
+## Lint (Görev 16'da ilk kez koşuldu)
+
+`bir-android:lintDebug` 4 hata, 7 uyarı; attribution ve iki örnek temiz.
+- `ContextProvider.kt:98,102` `MissingPermission` (3 bulgu): `ACCESS_NETWORK_STATE` kodda `checkPermission` ile korunuyor, ama lint bu biçimi tanımıyor.
+- `EventQueue.kt:100` `NewApi`: `Iterable.forEach` API 24; minSdk 21. Kotlin'in satır içi `forEach`'i yerine Java'nınkine çözümleniyor görünüyor, gerçek çökme riski ayrıca doğrulanmalı.
+- 7 uyarı: yalnız sürüm güncelliği (AGP, bağımlılıklar).
+Susturucu/baseline eklenmedi; karar sahibine bırakıldı.
+

@@ -76,3 +76,20 @@ ORG_GRADLE_PROJECT_signingInMemoryKeyPassword='...' \
   çekirdek tipi yok, `api` gerekmez); tüketici zaten `Cizeylem.initialize` çağırdığı için çekirdeği açıkça ekler.
 - **İmzalı yol (`signAllPublications()`) ve `publishToMavenCentral` gerçek ortamda hiç çalıştırılmadı** (GPG anahtarı
   ve Sonatype hesabı henüz yok). İlk gerçek yayın bir doğrulama adımıdır; yalnız `publishToMavenLocal` (imzasız) denendi.
+
+## CI (`.github/workflows/ci.yml`)
+
+Her push ve pull request'te çalışır; sır kullanmaz (yayın yalnız `publish.yml`). İki iş:
+`dogrula` (iki modülün `testDebugUnitTest`'i, `lint`, `scripts/measure-aar.sh` AAR boyut kapısı) ve
+`ornekler` (`samples/phone` ve `samples/tv` `assembleDebug`; ayrı iş olduğundan paralel koşar).
+
+## S5 geldiğinde: `spec-adapter` (HENÜZ YAZILMADI)
+
+Ortak test seti `bir-js/spec/` henüz yok (SPEC §9; Doğukan/Claude tarafında bekliyor). Olmayan bir
+sözleşmeye göre adaptör yazmak boşa gider, bu yüzden modül bilerek eklenmedi. Set gelince:
+
+1. `spec-adapter` modülü (JVM uygulaması, Android'e bağlı olmayan çekirdek mantığı sürer) eklenir; `settings.gradle.kts`'e dahil edilir.
+2. Adaptör **stdin'den JSON komut** okur, **stdout'a JSON sonuç** yazar; komut/sonuç biçimi ve alanları
+   birebir `bir-js/spec/` sözleşmesindendir. Biçim burada ÖNCEDEN uydurulmaz; önce sözleşme okunur.
+3. `ci.yml`'e, `bir-js/spec/` koşucusunu adaptöre bağlayan bir adım eklenir ve SPEC §8'deki
+   "S5 gelince `bir-js/spec/` adaptörü yeşil" maddesi bu adımla kapanır.

@@ -1,0 +1,50 @@
+# CI: her push ve pull request'te birim test, lint ve AAR boyut kapısı.
+# Yayınla ilgisi yok: sır KULLANMAZ (yayın için publish.yml). Ayrıntı: docs/RELEASE.md
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dogrula:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Birim testler ve lint
+        run: ./gradlew --console=plain :bir-android:testDebugUnitTest :bir-android-attribution:testDebugUnitTest lint
+
+      # Çekirdek AAR 150 KB'ı (SPEC §1) aşarsa betik 1 ile çıkar.
+      - name: AAR boyut kapısı
+        run: ./scripts/measure-aar.sh
+
+  # Örnekler ayrı iş: StrictMode(penaltyDeath) açık örneklerin derlenmesi, SDK'nın
+  # genel API'sinin bozulmadığını gösterir. Ayrı iş olduğu için duvar saatini uzatmaz
+  # (paralel koşar); yalnız derler, çalıştırmaz.
+  ornekler:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Örnekleri derle
+        run: ./gradlew --console=plain :samples:phone:assembleDebug :samples:tv:assembleDebug
