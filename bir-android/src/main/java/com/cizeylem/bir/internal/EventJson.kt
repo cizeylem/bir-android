@@ -78,7 +78,10 @@ internal object EventJson {
         return o.toString()
     }
 
-    private val IDENTITY_KEYS = setOf("device_id", "user_id", "distinct_id")
+    // `gaid` de kimliktir: cihaz kapsamlı, kalıcı ve sıfırlanana kadar aynı kalan bir reklam kimliği.
+    // Kimliksiz uca girerse oradaki kayıtlar yeniden kimliklendirilebilir; toplamayı yönlendirme yapan
+    // yer (attribution modülünün `route`'u) kapatır, burası son savunma katmanıdır.
+    private val IDENTITY_KEYS = setOf("device_id", "user_id", "distinct_id", "gaid")
 
     private fun obj(m: Map<String, Any?>): JSONObject {
         val o = JSONObject()

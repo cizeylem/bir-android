@@ -96,7 +96,9 @@ class AttributionSinkTest {
     @Test fun `kimliksiz gonderim anon uca gider ve govdede kimlik bulunmaz`() {
         grant(Consent(attribution = true))
         val delivered = ArrayList<Boolean>()
-        Cizeylem.sendAnonymous(fields + mapOf("device_id" to "sızıntı", "user_id" to "sızıntı")) { delivered.add(it) }
+        Cizeylem.sendAnonymous(
+            fields + mapOf("device_id" to "sızıntı", "user_id" to "sızıntı", "gaid" to "sızıntı"),
+        ) { delivered.add(it) }
         sch.run()
         assertEquals("2xx = kalıcı devir tamam", listOf(true), delivered)
         val body = anon.single()
@@ -106,6 +108,8 @@ class AttributionSinkTest {
         assertFalse("gövdede device_id olamaz", o.has("device_id"))
         assertFalse("gövdede user_id olamaz", o.has("user_id"))
         assertFalse("gövdede distinct_id olamaz", o.has("distinct_id"))
+        // GAID cihaz kapsamlı, kalıcı bir reklam kimliğidir: kimliksiz uçta yeniden kimliklendirme sağlar.
+        assertFalse("gövdede gaid olamaz", o.has("gaid"))
         assertTrue(o.has("sent_at"))
     }
 

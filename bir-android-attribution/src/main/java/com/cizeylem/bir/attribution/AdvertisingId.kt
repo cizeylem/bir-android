@@ -24,6 +24,10 @@ import java.util.concurrent.TimeUnit
  *   2. `com.google.android.gms.permission.AD_ID` izni — ANA UYGULAMANIN manifest'inde (bkz. aşağıdaki not),
  *   3. `isLimitAdTrackingEnabled == false` — cihazda kişiselleştirilmiş reklam sınırı kapalı.
  *
+ * Bu üç kapı "GAID OKUNABİLİR Mİ" sorusunu yanıtlar. "GAID GÖNDERİLİR Mİ" ayrı bir karardır ve çağıranda
+ * durur: [AttributionRun.route] GAID'i yalnız kimlikli dalda toplar, çünkü kimliksiz uç (`/v1/attribution/anon`)
+ * sözleşmesi gereği hiçbir kalıcı kimlik taşıyamaz. Yani `adSharing` tek başına açıkken bu okuyucuya hiç gelinmez.
+ *
  * SIFIR KİMLİK (`00000000-0000-0000-0000-000000000000`) asla döndürülmez: GMS, LAT açıkken ya da izin
  * bildirilmemişken bunu döndürür ve "kullanılabilir kimlik yok" demektir; kimlik olarak saklanamaz.
  *

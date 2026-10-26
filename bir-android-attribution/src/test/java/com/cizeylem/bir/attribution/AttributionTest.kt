@@ -147,6 +147,19 @@ class AttributionTest {
         assertEquals("com.android.vending", f["install_source"])
     }
 
+    @Test fun `adSharing tek basina GAID'i kimliksiz uca sizdirmaz`() {
+        // GAID cihaz kapsamlı ve kalıcı bir reklam kimliğidir: `/v1/attribution/anon` sözleşmesi "kimlik yok"
+        // olduğundan, adSharing açık olsa bile kimliksiz gövdeye giremez (yoksa kayıtlar yeniden kimliklenir).
+        val (sink, _) = run(
+            Consent(adSharing = true),
+            play = mapOf("install_referrer" to "P"),
+            gaid = "38400000-8cf0-11bd-b23e-10b96e40000d",
+        )
+        assertNull("rızasız kimlikli uç kullanılamaz", sink.identified)
+        assertEquals("P", sink.anonymous!!["play_install_referrer"])
+        assertFalse("GAID kimliksiz gövdeye giremez", sink.anonymous!!.containsKey("gaid"))
+    }
+
     @Test fun `hicbir sinyal yoksa gonderim yapilmaz`() {
         val (sink, _) = run(Consent(analytics = true, attribution = true))
         assertNull(sink.identified)

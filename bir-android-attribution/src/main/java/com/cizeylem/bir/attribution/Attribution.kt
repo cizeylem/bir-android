@@ -193,11 +193,6 @@ internal class AttributionRun(
     private fun finish(consent: Consent, onDone: (() -> Unit)?) {
         if (!finished.compareAndSet(false, true)) return
         if (fields.isEmpty()) return close(onDone)
-        try {
-            collectGaid(consent)?.let { fields["gaid"] = it }
-        } catch (e: RuntimeException) {
-            Log.w(TAG, "GAID okunamadı: ${e.javaClass.simpleName}")
-        }
         // Teslim onayı hiç gelmezse (çekirdek kapandı, görev reddedildi) tur asılı kalmasın. Zaman aşımı
         // İŞARET YAZMAZ: emin olunmayan teslimde kaybı değil, tekrarı seçiyoruz.
         armDeliveryTimeout(onDone)
@@ -212,10 +207,21 @@ internal class AttributionRun(
     /**
      * Rıza katmanlılığı (SPEC §5): kalıcı kimliği açan TEK anahtar `analytics`'tir. `attribution` onun
      * üstüne eklenen kademedir; tek başına kimlikli gönderimi açmaz. `adSharing` yalnız GAID kapısıdır,
-     * gönderim yolunu hiç etkilemez.
+     * gönderim yolunu hiç etkilemez — ama GAID'in kendisi KİMLİKLİ DALA bağlıdır (aşağıdaki not).
      */
     private fun route(consent: Consent, onDelivered: (Boolean) -> Unit) {
         if (consent.analytics && consent.attribution) {
+            // GAID YALNIZ BU DALDA toplanır. `adSharing` tek başına açıkken toplasaydık alan kimliksiz
+            // `/v1/attribution/anon` gövdesine girerdi; GAID cihaz kapsamlı ve kalıcı bir reklam kimliği
+            // olduğu için o uçtaki kayıtlar yeniden kimliklendirilebilir hale gelirdi. Kapının yerini
+            // `AdvertisingId.read` yerine BURASI seçti: okuyucunun üç kapısı (adSharing + AD_ID izni + LAT)
+            // "GAID okunabilir mi" sorusunun yanıtıdır; "hangi uca gider" sorusu ise yönlendirme kararıdır
+            // ve yönlendirmeyi yapan yerde durmalıdır. Son savunma katmanı: EventJson.IDENTITY_KEYS.
+            try {
+                collectGaid(consent)?.let { fields["gaid"] = it }
+            } catch (e: RuntimeException) {
+                Log.w(TAG, "GAID okunamadı: ${e.javaClass.simpleName}")
+            }
             sink.sendIdentified(fields, onDelivered)
         } else {
             sink.sendAnonymous(fields, onDelivered)
