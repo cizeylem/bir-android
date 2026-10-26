@@ -40,8 +40,7 @@ tag ile `VERSION_NAME` eşleşmesini doğrular, testleri ve 150 KB AAR sınırı
 - [ ] Sonatype Central Portal hesabı açıldı, `com.cizeylem` namespace'i doğrulandı (DNS TXT).
 - [ ] GPG anahtarı üretildi, açık anahtar bir anahtar sunucusuna (ör. keyserver.ubuntu.com) yüklendi.
 - [ ] Dört secret repoya girildi.
-- [ ] Lisans onaylandı: POM'da Apache-2.0 yazıyor (kardeş depo `bir-js` ile aynı). Depoda `LICENSE` dosyası **yok**;
-      eklenmesi bir karardır, Central bunu zorunlu tutmaz ama POM lisansı şarttır.
+- [ ] Lisans: Apache-2.0 onaylandı (kardeş depo `bir-js` ile aynı); depoda `LICENSE` ve `NOTICE` var, POM lisansı ile tutarlı.
 - [ ] POM'daki geliştirici/SCM bilgisi (`github.com/cizeylem/bir-android`, geliştirici "Çizeylem") doğru.
 - [ ] `VERSION_NAME` yayınlanacak sürüme ayarlandı ve ana dala alındı.
 - [ ] Yerel doğrulama temiz (aşağıda); `./scripts/measure-aar.sh` 150 KB altında.
@@ -69,3 +68,10 @@ ORG_GRADLE_PROJECT_signingInMemoryKey="$(gpg --export-secret-keys --armor <KEYID
 ORG_GRADLE_PROJECT_signingInMemoryKeyPassword='...' \
 ./gradlew publishToMavenLocal   # .asc dosyaları da çıkar
 ```
+
+## Notlar
+
+- Entegrasyon iki modülü de ekler: `bir-android-attribution` çekirdeğe `implementation` ile bağlıdır (genel yüzeyinde
+  çekirdek tipi yok, `api` gerekmez); tüketici zaten `Cizeylem.initialize` çağırdığı için çekirdeği açıkça ekler.
+- **İmzalı yol (`signAllPublications()`) ve `publishToMavenCentral` gerçek ortamda hiç çalıştırılmadı** (GPG anahtarı
+  ve Sonatype hesabı henüz yok). İlk gerçek yayın bir doğrulama adımıdır; yalnız `publishToMavenLocal` (imzasız) denendi.
