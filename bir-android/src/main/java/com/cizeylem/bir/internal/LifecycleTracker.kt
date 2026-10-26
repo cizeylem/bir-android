@@ -34,26 +34,9 @@ internal class LifecycleTracker(
     // Bayrak yerine damga: yeni Activity hiç gelmezse (kullanıcı o sırada Home'a bastı) damga eskir ve sonraki gerçek
     // ön plana geçiş yutulmaz. Bedeli: o durumda cz_app_backgrounded kaçar; flush 30 sn'lik zamanlayıcıyla da tetiklenir.
     private var configStopAt: Long? = null
-    private var registered = false
     // Durum yazımı başarısızsa bu süreçte kurulum/güncelleme event'ini tekrarlamayız. Süreçler arası tekrarı
     // (yazma kalıcı olarak başarısızsa her açılışta) önleyemeyiz; kalıcılık yokken yapılacak bir şey yok.
     private var writeFailed = false
-
-    /**
-     * Süreç başına bir kez çağrılır. Kurulum/güncelleme kontrolünü burada yapar; ilk Activity'den ÖNCE çalıştığı için
-     * sıralama kendiliğinden `installed` → `opened` olur: ilk açılış hem kurulum hem açılıştır, ve kurulum açılışın
-     * nedeni olduğundan önce gelir (panelde "kurulumdan sonra ilk açılış" doğal sırayla okunur).
-     *
-     * SÖZLEŞME: `Application.onCreate` içinde, ilk Activity başlamadan ÖNCE çağrılmalıdır. Geç çağrılırsa ilk
-     * `cz_app_opened` kaçar ve sayaç yanlış kalır (çalışan Activity'yi görmediği için 1→0 geçişi hiç oluşmaz).
-     */
-    fun register() {
-        if (!registered) {
-            registered = true
-            app.registerActivityLifecycleCallbacks(this)
-        }
-        checkInstallOrUpdate()
-    }
 
     // Facade'den gelen istisna uygulamanın Activity callback'inde çökmeye gitmemeli.
     private fun emit(name: String, props: Map<String, Any?>) {
@@ -85,8 +68,11 @@ internal class LifecycleTracker(
     }
 
     /**
-     * Diske ve PackageManager'a gider: ana thread'den ÇAĞRILMAZ. `register()` ile birlikte ya da facade
-     * gibi callback kaydını kendisi yapan çağıranlarda ayrı olarak, SDK'nın arka plan thread'inde çağrılır.
+     * Diske ve PackageManager'a gider: ana thread'den ÇAĞRILMAZ; SDK'nın arka plan thread'inde çağrılır.
+     *
+     * SIRA: callback kaydından (`registerActivityLifecycleCallbacks`) ve ilk Activity'den ÖNCE çağrılmalıdır,
+     * böylece sıralama kendiliğinden `installed` → `opened` olur (kurulum açılışın nedenidir). Kaydı Core
+     * yapar; bu sınıf kendi kendini kaydetmez — iki kayıt noktası olsaydı callback'ler çift gelirdi.
      */
     internal fun checkInstallOrUpdate() {
         if (writeFailed) return

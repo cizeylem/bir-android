@@ -55,7 +55,13 @@ class LifecycleTrackerTest {
     ) = LifecycleTracker(app, file, existing, { n, p -> into.add(n to p) }, { backgrounds++ }, { clock })
 
     private fun tracker(existing: Boolean = false, into: MutableList<Pair<String, Map<String, Any?>>> = events) =
-        newTracker(existing, into).also { it.register() }
+        newTracker(existing, into).also { register(it) }
+
+    /** Üretimdeki kayıt deseni (Core yapar): önce kurulum/güncelleme kontrolü, sonra callback kaydı. */
+    private fun register(t: LifecycleTracker) {
+        t.checkInstallOrUpdate()
+        app.registerActivityLifecycleCallbacks(t)
+    }
 
     // Yapılandırma değişikliğiyle duruyormuş gibi davranan Activity: yenisi hiç gelmeyen durumu taklit eder.
     class ConfigStopActivity : Activity() {
@@ -169,18 +175,18 @@ class LifecycleTrackerTest {
         assertEquals(listOf("cz_app_opened", "cz_app_opened"), names())
     }
 
-    @Test fun `yazilamaz durum dosyasiyla register cokmez ve ikinci register installed tekrarlamaz`() {
+    @Test fun `yazilamaz durum dosyasiyla kontrol cokmez ve ikinci kontrol installed tekrarlamaz`() {
         // Üst "dizin" düz dosya: mkdirs başarısız olur, atomicWrite IOException atar.
         val blocker = File(dir, "blok").apply { writeText("x") }
         val t = newTracker(file = File(blocker, "state"))
-        t.register()
-        t.register()
+        t.checkInstallOrUpdate()
+        t.checkInstallOrUpdate()
         assertEquals(listOf("cz_app_installed"), names())
     }
 
     @Test fun `onEvent ve onBackground istisnasi Activity callback'ine sizmaz`() {
         val t = LifecycleTracker(app, stateFile(), false, { _, _ -> error("x") }, { error("y") }, { clock })
-        t.register()
+        register(t)
         Robolectric.buildActivity(Activity::class.java).create().start().resume().pause().stop()
     }
 }
