@@ -36,7 +36,7 @@ import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
-class PlayReferrerReaderTest {
+class PlayReferrerTest {
     private val action = "com.google.android.finsky.BIND_GET_INSTALL_REFERRER_SERVICE"
     private val descriptor = "com.google.android.finsky.externalreferrer.IGetInstallReferrerService"
     private val svcClass = "com.google.android.finsky.externalreferrer.GetInstallReferrerService"
@@ -93,7 +93,7 @@ class PlayReferrerReaderTest {
         fun await(): Map<String, Any?>? { assertTrue("callback gelmedi", latch.await(5, TimeUnit.SECONDS)); return value.get() }
     }
 
-    /** Gerçek AIDL wire'ını doğrulayan sahte Play servisi: descriptor, kod 1 ve istek Bundle'ı denetlenir. */
+    /** Elle kurulan wire protokolünü (AIDL ile aynı) doğrulayan sahte Play servisi: descriptor, kod 1 ve istek Bundle'ı denetlenir. */
     private inner class FakeService(val reply: Bundle?, val throwRemote: Boolean = false) : Binder() {
         var code = -1
         var requestPackage: String? = null
@@ -126,7 +126,7 @@ class PlayReferrerReaderTest {
         assertTrue("bindService çağrılmadı", ctx.conn != null)
     }
 
-    @Test fun `mutlu yol tum alanlari ham dondurur ve isareti yazar`() {
+    @Test fun `tum referrer alanlari okunur ve server_seconds dahil edilir`() {
         installPlay()
         val svc = FakeService(fullBundle())
         val r = Result()
@@ -189,7 +189,7 @@ class PlayReferrerReaderTest {
         assertEquals(mapOf<String, Any?>("install_referrer" to "x=1"), r.await())
     }
 
-    @Test fun `Play Store yoksa sessizce null bind cagrilmaz isaret yazilmaz`() {
+    @Test fun `Play Store yoksa callback null ile cagrilir, istisna yok`() {
         val r = Result()
         reader().read(r.cb)
         assertNull(r.await())
@@ -223,7 +223,7 @@ class PlayReferrerReaderTest {
         assertNull(ctx.conn)
     }
 
-    @Test fun `onServiceDisconnected null ile cagirir ve asili kalmaz`() {
+    @Test fun `servis baglanti kopmasinda callback null ile cagrilir`() {
         installPlay()
         val r = Result()
         reader().read(r.cb)
@@ -263,7 +263,21 @@ class PlayReferrerReaderTest {
         assertFalse(AttributionState(dir).isDone("play_referrer"))
     }
 
-    @Test fun `zaten okunduysa hicbir sey yapmadan null`() {
+    @Test fun `basarili okumanin ardindan ikinci okuma bind etmeden null verir`() {
+        installPlay()
+        val r1 = Result()
+        reader().read(r1.cb)
+        waitBound()
+        ctx.conn!!.onServiceConnected(ComponentName("a", "b"), FakeService(fullBundle()))
+        assertTrue(r1.await() != null)
+        ctx.conn = null
+        val r2 = Result()
+        reader().read(r2.cb)
+        assertNull(r2.await())
+        assertNull(ctx.conn)
+    }
+
+    @Test fun `bir kez okunduktan sonra tekrar okunmaz`() {
         installPlay()
         AttributionState(dir).markDone("play_referrer")
         val r = Result()

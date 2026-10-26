@@ -22,7 +22,7 @@ API 21+ olduğundan alt sınırı yükseltmek kazanç değil, kapsam kaybı olur
 
 | Madde | Sonuç |
 |---|---|
-| Play Install Referrer AIDL arayüz/intent adları | AÇIK. Attribution modülünün (`bir-android-attribution`) işi; çekirdekte referrer kodu yok. Bu görevde doğrulanmadı. |
+| Play Install Referrer AIDL arayüz/intent adları | DOĞRULANDI (`installreferrer-2.2` bytecode'u, `javap`). Descriptor `com.google.android.finsky.externalreferrer.IGetInstallReferrerService` (brief'teki `com.android.installreferrer` yanlıştı), transaction kodu 1, flags 0; action `com.google.android.finsky.BIND_GET_INSTALL_REFERRER_SERVICE`, component `com.android.vending/com.google.android.finsky.externalreferrer.GetInstallReferrerService`; istek `package_name`, yanıt 7 anahtar. `.aidl` KULLANILMADI: aynı paket adında sınıf üretmek `installreferrer` AAR'ıyla "Duplicate class" yaratırdı; wire `Parcel` ile elle kuruldu (`PlayReferrer.kt`). GERÇEK CİHAZDA OKUMA KAYDI YAPILAMADI (Play Store'lu cihaz yok; ClickUp kabul kriteri açık). Birim testler sahte Binder ile wire'ı sınar. Ertelenen test: "servis başka pakete ait" dalı (Robolectric ServiceInfo.packageName'i yeniden yazıyor). |
 | Fire TV yeni modeller Vega OS olabilir (APK yok) | AÇIK. Cihaz/pilot gerektirir; burada denenmedi. TV örneği yalnız derlendi. |
 
 ## Ölçülen kabul kriterleri (SPEC §8)

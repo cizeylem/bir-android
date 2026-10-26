@@ -6,16 +6,39 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.Bundle
 import android.os.IBinder
+import android.os.Parcel
 import android.os.RemoteException
-import com.google.android.finsky.externalreferrer.IGetInstallReferrerService
 import java.io.IOException
+import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Google Play Install Referrer'ı `installreferrer` kütüphanesi OLMADAN, AIDL ile okur (SPEC §7).
+ * Genel kapı: ilk açılışta bir kez okur. İşçi thread tembel ve daemon; yalnız bu iş için tek thread.
+ * (Executor sahipliği Görev 14'te Cizeylem ile birleştirilecek.)
+ */
+internal object PlayReferrer {
+    private val executor by lazy {
+        Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "cizeylem-referrer").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }
+        }
+    }
+
+    fun read(context: Context, callback: (Map<String, Any?>?) -> Unit) {
+        val app = context.applicationContext ?: context
+        PlayReferrerReader(app, AttributionState(app.noBackupFilesDir), executor).read(callback)
+    }
+}
+
+/**
+ * Google Play Install Referrer'ı `installreferrer` kütüphanesi OLMADAN okur (SPEC §7).
+ *
+ * AIDL dosyası YOK, wire protokolü elle kurulur: AIDL, Google'ın paket adında
+ * (`com.google.android.finsky.externalreferrer.IGetInstallReferrerService`) bir sınıf üretirdi; tüketici
+ * uygulama `installreferrer` AAR'ını da alırsa (Firebase, Adjust vb.) "Duplicate class" ile derleme kırılırdı.
+ * Wire uyumluluğunu sınıf adı değil, Parcel'a yazılan descriptor STRING'i ve transaction kodu sağlar.
  * Protokol sabitleri installreferrer-2.2 bytecode'undan çıkarılmıştır; uydurma sabit yoktur.
  *
  * Sözleşme: `read` callback'i TAM BİR KEZ çağırır. Değer ham alanlar haritasıdır (yorumlama yok, şifre çözme
@@ -113,7 +136,7 @@ internal class PlayReferrerReader(
             if (finished.get() || service == null) return finish(null)
             val request = Bundle().apply { putString(KEY_PACKAGE_NAME, context.packageName) }
             val reply: Bundle? = try {
-                IGetInstallReferrerService.Stub.asInterface(service).getInstallReferrer(request)
+                transact(service, request)
             } catch (e: RemoteException) {
                 null
             }
@@ -129,6 +152,26 @@ internal class PlayReferrerReader(
             finish(fields)
         }
 
+        /**
+         * AIDL'nin `in Bundle` / `Bundle` dönüşlü ürettiği kodun aynısı: istek `token + writeInt(1) + Bundle`,
+         * yanıt `readException + readInt + Bundle`. Senkron (flags 0). Parcel'lar finally'de geri verilir.
+         */
+        private fun transact(service: IBinder, request: Bundle): Bundle? {
+            val data = Parcel.obtain()
+            val replyParcel = Parcel.obtain()
+            try {
+                data.writeInterfaceToken(DESCRIPTOR)
+                data.writeInt(1)
+                request.writeToParcel(data, 0)
+                service.transact(TRANSACTION_GET_INSTALL_REFERRER, data, replyParcel, 0)
+                replyParcel.readException()
+                return if (replyParcel.readInt() != 0) Bundle.CREATOR.createFromParcel(replyParcel) else null
+            } finally {
+                replyParcel.recycle()
+                data.recycle()
+            }
+        }
+
         fun finish(result: Map<String, Any?>?) {
             if (!finished.compareAndSet(false, true)) return
             if (bound) {
@@ -140,7 +183,11 @@ internal class PlayReferrerReader(
 
     internal companion object {
         const val KEY_DONE = "play_referrer"
+        // Zaman aşımı seçimimizdir (Play'de karşılığı yok): bağlanma normalde saniyenin altındadır; 15 sn,
+        // yavaş açılan Play'e pay bırakır ama callback'in ve açık kalan bağlantının asılı kalmasını sınırlar.
         const val DEFAULT_TIMEOUT_MS = 15_000L
+        const val DESCRIPTOR = "com.google.android.finsky.externalreferrer.IGetInstallReferrerService"
+        const val TRANSACTION_GET_INSTALL_REFERRER = 1 // FIRST_CALL_TRANSACTION + 0 (installreferrer-2.2)
         const val ACTION = "com.google.android.finsky.BIND_GET_INSTALL_REFERRER_SERVICE"
         const val PLAY_PACKAGE = "com.android.vending"
         const val SERVICE_CLASS = "com.google.android.finsky.externalreferrer.GetInstallReferrerService"

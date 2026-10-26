@@ -12,8 +12,6 @@ android {
         testOptions.targetSdk = 36
     }
 
-    // Play Install Referrer servisi AIDL ile çağrılır (kütüphanesiz, SPEC §7).
-    buildFeatures { aidl = true }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
