@@ -26,13 +26,97 @@ API 21+ olduğundan alt sınırı yükseltmek kazanç değil, kapsam kaybı olur
 | GMS reklam kimliği (GAID) servisi, kütüphanesiz | DOĞRULANDI (`play-services-ads-identifier:18.3.0` bytecode'u, `javap`). Action `com.google.android.gms.ads.identifier.service.START`, hedef **`setPackage("com.google.android.gms")`** (`setComponent` YOK), bind bayrağı 1 (BIND_AUTO_CREATE), bağlanma beklemesi 10 sn. Descriptor `com.google.android.gms.ads.identifier.internal.IAdvertisingIdService`; kod 1 = `getId` (parametresiz, String), kod 2 = `isLimitAdTrackingEnabled` (isteğe `writeInt(1)`, int 0/1). Kod 6 (debug) kullanılmadı. `AdvertisingId.kt`. GERÇEK CİHAZDA OKUMA KAYDI YAPILAMADI (GMS'li cihaz yok): sıfır kimliğin hangi koşullarda döndüğü, `AD_ID` izni yokken GMS'in sıfır mı döndürdüğü yoksa `SecurityException` mı fırlattığı, ve `<queries>` girdisinin gerçekten gerekli olup olmadığı cihazda doğrulanmalı. Birim testler sahte Binder ile wire'ı sınar. |
 | `AD_ID` izninin kütüphanede bildirilmemesi | KARAR (Kontrolcü). `<uses-permission AD_ID>` modül manifest'ine KONMADI: manifest birleştirmeyle modülü alan her uygulamaya geçer ve Play Console'da reklam kimliği beyanını zorunlu kılardı. İzin ana uygulamanın işidir; SDK çalışma anında `checkSelfPermission` ile denetler ve yoksa GAID'i atlar. Entegrasyon notu `bir-android-attribution/README.md`'de. |
 | `<queries><package com.google.android.gms>` | EKLENDİ, cihazda doğrulanmadı. Araştırma "tahmin" işaretledi (Google'ın kendi AAR'ı eklemiyor); eksikse GAID sessizce hiç okunmaz, fazlalığın maliyeti yok. |
-| Attribution gövdesinde Play/Meta alan adı çakışması | KARAR (bu görev). İki kaynak da `install_referrer` anahtarını kullanıyor; tek gövdede birleşince çakışıyorlardı. Alanlar `play_` / `meta_` ön ekiyle yazılır (`play_install_referrer`, `meta_install_referrer`, ...). SPEC bu adları tanımlamıyor; SUNUCU TARAFIYLA DOĞRULANMADI. |
-| Kimliksiz attribution gövdesinin biçimi | KARAR (bu görev). SPEC yalnız ucu (`POST /v1/attribution/anon`) ve "gövdede `device_id`/`user_id` yok" kuralını veriyor. Gövde düz bir JSON nesnesidir: `sent_at` + ham alanlar. Kimlik anahtarları (`device_id`, `user_id`, `distinct_id`) `EventJson.attributionAnon`'da ayrıca süzülür. SUNUCU TARAFIYLA DOĞRULANMADI. |
+| Attribution protokol icatları (alan adları, gövde biçimi, event adı) | KARAR (Görev 14), **sunucu tarafıyla doğrulanmadı**. Toplu liste ve örnek JSON'lar için aşağıdaki "Attribution protokolü: bizim icatlarımız" bölümüne bakın. S3 (sunucu) henüz yazılmadı; bu maddeler Doğukan'la anlaşılmalı. |
 | Fire TV yeni modeller Vega OS olabilir (APK yok) | AÇIK. Cihaz/pilot gerektirir; burada denenmedi. TV örneği yalnız derlendi. |
+
+## Attribution protokolü: bizim icatlarımız (SUNUCUYLA ANLAŞILMADI)
+
+SPEC §7 yalnız şunları veriyor: hangi sinyallerin toplanacağı, `install_source` alan adı, kimliksiz ucun
+yolu (`POST /v1/attribution/anon`) ve "gövdede `device_id`/`user_id` yok" kuralı. Aşağıdakilerin hepsi
+**Görev 14'te bizim seçtiğimiz** protokol ayrıntılarıdır; S3 (sunucu) henüz yazılmadığı için hiçbiri
+doğrulanmadı. Sunucu farklı bekliyorsa değişecek tek yer `AttributionRun` (alan adları) ve
+`EventJson.attributionAnon` (gövde biçimi) olur.
+
+### 1. Alan adları — `play_` / `meta_` ön ekleri
+
+Play ve Meta'nın ikisi de `install_referrer` anahtarını kullanıyor; tek gövdede birleşince
+**çakışıyorlardı**. Ön ek eklendi. Değerler HAM taşınır (yorumlama/şifre çözme sunucuda).
+
+| Kaynak | Gövdedeki anahtarlar |
+|---|---|
+| Play Install Referrer | `play_install_referrer`, `play_referrer_click_timestamp_seconds`, `play_referrer_click_timestamp_server_seconds`, `play_install_begin_timestamp_seconds`, `play_install_begin_timestamp_server_seconds`, `play_google_play_instant`, `play_install_version` |
+| Meta Install Referrer | `meta_install_referrer`, `meta_is_ct`, `meta_actual_timestamp` |
+| Mağaza kaynağı | `install_source` |
+| Reklam kimliği | `gaid` |
+
+Bir alan okunamadıysa gövdeye HİÇ yazılmaz (null gönderilmez): "bilmiyorum" ile "yok" aynı şey değildir.
+
+### 2. Kimlikli gövde — `cz_attribution` event'i, `POST /v1/batch`
+
+Event adı `cz_attribution` da bu görevde seçildi (SPEC'te yok). Alanlar event'in `props`'una girer; gövdenin
+geri kalanı normal event protokolüdür (SPEC §2), yani `distinct_id`, `context`, `session_id` vb. hazırdır.
+
+```json
+{
+  "sent_at": 1761500000000,
+  "events": [
+    {
+      "event": "cz_attribution",
+      "distinct_id": "9f1c4e2a-...",
+      "time": 1761499999000,
+      "insert_id": "b7e1...",
+      "session_id": "1761499990000",
+      "context": { "library": "bir-android", "library_version": "0.1.0", "...": "..." },
+      "props": {
+        "install_source": "com.android.vending",
+        "meta_install_referrer": "AbCdEf...==",
+        "meta_is_ct": 1,
+        "play_install_referrer": "utm_source=google&utm_medium=cpc",
+        "play_referrer_click_timestamp_seconds": 1761400001,
+        "play_install_begin_timestamp_seconds": 1761400003,
+        "play_google_play_instant": false,
+        "play_install_version": "1.2.3",
+        "gaid": "38400000-8cf0-11bd-b23e-10b96e40000d"
+      }
+    }
+  ]
+}
+```
+
+### 3. Kimliksiz gövde — `POST /v1/attribution/anon`
+
+Düz bir JSON nesnesi: `sent_at` (duvar saati, ms) + ham alanlar. Sarmalayıcı yok, dizi yok.
+`device_id`, `user_id` ve `distinct_id` anahtarları `EventJson.attributionAnon`'da **ayrıca süzülür**.
+
+```json
+{
+  "sent_at": 1761500000000,
+  "install_source": "com.android.vending",
+  "meta_install_referrer": "AbCdEf...==",
+  "meta_is_ct": 1,
+  "play_install_referrer": "utm_source=google&utm_medium=cpc",
+  "play_referrer_click_timestamp_seconds": 1761400001,
+  "play_install_begin_timestamp_seconds": 1761400003,
+  "play_google_play_instant": false,
+  "play_install_version": "1.2.3",
+  "gaid": "38400000-8cf0-11bd-b23e-10b96e40000d"
+}
+```
+
+Başlıklar her iki uçta da aynı: `Content-Type: application/json`, `Content-Encoding: gzip`,
+`Authorization: Bearer <writeKey>`.
+
+### 4. Tekrar gönderim beklenmeli (sunucu tekilleştirmeli)
+
+"Okundu" işareti yalnız **kalıcı devirden sonra** yazılır: kimlikli yolda alanlar çekirdeğin dayanıklı
+kuyruğuna yazıldığında, kimliksiz yolda sunucudan **2xx** geldiğinde. Başka her sonuçta işaret yazılmaz ve
+sinyal bir sonraki açılışta **yeniden gönderilir**. Kimliksiz uçta `insert_id` benzeri bir tekilleştirme
+anahtarı YOK; sunucunun aynı ham referrer'ı tekilleştirmesi gerekir. (Tekrar gönderim bilinçli seçimdir:
+kaybolan atıf geri gelmez.)
 
 ## Ölçülen kabul kriterleri (SPEC §8)
 
-- Birim testler: 214 test, 0 hata (çekirdek 147, attribution 67).
+- Birim testler: 218 test, 0 hata (çekirdek 149, attribution 69).
 - AAR ≤ 150 KB: 100,81 KB.
 - StrictMode: `StrictModeTest` (`ThreadPolicy` + `VmPolicy`, `detectAll().penaltyDeath()`) altında
   `initialize → setConsent → track → flush` ihlalsiz geçti. Test ilk koşuda GERÇEK bir ihlali yakaladı:

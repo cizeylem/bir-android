@@ -161,7 +161,9 @@ class PlayReferrerTest {
         )
         assertEquals(1, svc.code)
         assertEquals(ctx.packageName, svc.requestPackage)
-        assertTrue(AttributionState(dir).isDone("play_referrer"))
+        // İşaretin sahibi artık okuyucu DEĞİL: işaret yalnız kalıcı devirden (kuyruk ya da 2xx) sonra,
+        // AttributionRun tarafından yazılır. Okuyucu yazsaydı, teslim ağda düşünce referrer kaybolurdu.
+        assertFalse("okuyucu işaret yazmamalı", AttributionState(dir).isDone("play_referrer"))
         assertEquals(1, ctx.unbound)
         assertEquals(1, r.calls.get())
     }
@@ -276,7 +278,7 @@ class PlayReferrerTest {
         assertFalse(AttributionState(dir).isDone("play_referrer"))
     }
 
-    @Test fun `basarili okumanin ardindan ikinci okuma bind etmeden null verir`() {
+    @Test fun `teslim edilmeden ikinci okuma referrer'i yeniden okur`() {
         installPlay()
         val r1 = Result()
         reader().read(r1.cb)
@@ -284,10 +286,13 @@ class PlayReferrerTest {
         ctx.conn!!.onServiceConnected(ComponentName("a", "b"), FakeService(fullBundle()))
         assertTrue(r1.await() != null)
         ctx.conn = null
+        // İşareti okuyucu yazmıyor: alanlar kalıcı olarak devredilmedikçe (AttributionRun'ın işi) referrer
+        // bir sonraki açılışta YENİDEN okunmalı. Aksi halde gönderim ağda düşünce atıf kalıcı olarak kaybolurdu.
         val r2 = Result()
         reader().read(r2.cb)
-        assertNull(r2.await())
-        assertNull(ctx.conn)
+        waitBound()
+        ctx.conn!!.onServiceConnected(ComponentName("a", "b"), FakeService(fullBundle()))
+        assertTrue("teslim edilmemiş referrer yeniden okunmalı", r2.await() != null)
     }
 
     @Test fun `bir kez okunduktan sonra tekrar okunmaz`() {
@@ -385,37 +390,14 @@ class PlayReferrerTest {
         assertEquals("test-timer", dc.cbThread.get().name)
     }
 
-    @Test fun `zaman asimi markDone cozumlemesi sirasinda ates ederse sahiplenen teslim eder ve isaret yazilir`() {
+    @Test fun `depo erisilemezse callback null ile gelir ve istisna sizmaz`() {
         installPlay()
-        val calls = java.util.concurrent.atomic.AtomicInteger()
-        val reachedMark = java.util.concurrent.atomic.AtomicBoolean(false)
         val r = Result()
-        // noBackupDir ikinci kez markDone için çözülür (sahiplik alındıktan sonra): orada zaman aşımını geçirt.
-        // Süreler iri: yavaş makinede fetch'in CAS'ı zaman aşımından geç kalıp testi boşuna geçirmesin.
-        reader(timeoutMs = 1000, noBackup = {
-            if (calls.incrementAndGet() >= 2) { reachedMark.set(true); Thread.sleep(1400) }
-            dir
-        }).read(r.cb)
-        waitBound()
-        ctx.conn!!.onServiceConnected(ComponentName("a", "b"), FakeService(fullBundle()))
-        val got = r.await()
-        assertTrue("markDone aşamasına gelinmedi (test anlamsız)", reachedMark.get())
-        assertTrue("sahiplenen referrer'ı teslim etmeli", got != null)
-        assertTrue(AttributionState(dir).isDone("play_referrer"))
+        // "okundu" kapısı çözülürken depo patlarsa (kilitli kullanıcı, SecurityException) akış sessizce biter.
+        reader(noBackup = { throw SecurityException("depo yok") }).read(r.cb)
+        assertNull(r.await())
         assertEquals(1, r.calls.get())
-    }
-
-    @Test fun `sahiplik alindiktan sonra isaret yazimi RuntimeException atsa da callback gelir ve baglanti birakilir`() {
-        installPlay()
-        val calls = java.util.concurrent.atomic.AtomicInteger()
-        val r = Result()
-        reader(noBackup = { if (calls.incrementAndGet() >= 2) throw SecurityException("depo yok") else dir }).read(r.cb)
-        waitBound()
-        ctx.conn!!.onServiceConnected(ComponentName("a", "b"), FakeService(fullBundle()))
-        // Referrer alındı; işaret yazılamadı ama teslim edilmeli (bir kez daha okumak, kaybetmekten iyi).
-        assertTrue(r.await() != null)
-        assertEquals(1, ctx.unbound)
-        assertEquals(1, r.calls.get())
+        assertNull("bind denenmemeliydi", ctx.conn)
     }
 
     @Test fun `bind sonrasi gec zaman asimi baglantiyi birakir`() {

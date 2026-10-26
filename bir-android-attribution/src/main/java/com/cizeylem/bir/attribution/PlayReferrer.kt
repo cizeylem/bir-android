@@ -9,7 +9,6 @@ import android.os.IBinder
 import android.os.Parcel
 import android.os.RemoteException
 import java.io.File
-import java.io.IOException
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
@@ -34,8 +33,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * `transact` takılırsa işçi tıkanır; zaman aşımı ve callback aynı thread'e konsaydı tam gerektiği anda çalışamazdı.
  * Callback her yoldan (başarı, kopma, zaman aşımı, hata) hep [timer] thread'inde çağrılır; Görev 14 buna güvenebilir.
  *
- * İşaret ("okundu") yalnız referrer GERÇEKTEN alındığında yazılır. Geçici başarısızlıklar (kopma, bağlanma reddi)
- * sonraki açılışta yeniden denenir; Play'siz cihazda bu yalnız ucuz bir `queryIntentServices`'tir.
+ * "okundu" işaretini bu sınıf yalnız OKUR ([KEY_DONE] kapısı); YAZMAZ. Yazma sahipliği `AttributionRun`'dadır
+ * ve ancak alanlar kalıcı olarak devredildikten sonra yazılır — teslim artık bir ağ gönderimi içeriyor, işareti
+ * okuma anında yazmak gönderim düşünce referrer'ı kalıcı olarak kaybettirirdi. Geçici başarısızlıklar (kopma,
+ * bağlanma reddi) sonraki açılışta yeniden denenir; Play'siz cihazda bu yalnız ucuz bir `queryIntentServices`'tir.
  */
 internal class PlayReferrerReader(
     context: Context,
@@ -141,19 +142,12 @@ internal class PlayReferrerReader(
                 @Suppress("DEPRECATION") // tip belirsiz get(): değer olduğu gibi (ham) taşınır
                 if (reply.containsKey(key)) fields[key] = reply.get(key)
             }
-            // Sahipliği ÖNCE al, sonra işareti yaz: kontrol-sonra-yaz penceresinde zaman aşımı callback'e null verip
-            // işareti "okundu" bırakırdı ve referrer bir daha hiç okunmazdı. Kaybeden hiçbir şey yazmaz.
+            // "okundu" işaretini BURASI YAZMAZ (Görev 14'te sahiplik değişti): işaret yalnız alanlar kalıcı
+            // olarak devredildikten sonra (kuyruğa yazıldı ya da anon uçtan 2xx geldi) AttributionRun
+            // tarafından yazılır. Burada yazsaydık, gönderim ağda düşünce referrer kalıcı olarak kaybolurdu.
             if (!finished.compareAndSet(false, true)) return
-            // Sahiplik alındı: bundan sonra HİÇBİR yoldan teslimsiz çıkılmaz (finish artık no-op, callback hiç gelmezdi).
-            // Yazılamayan işaret (IOException ya da SecurityException gibi RuntimeException) referrer'ı atmak için
-            // sebep değil: göndermek, bir kez daha okumaktan iyidir.
-            try {
-                AttributionState(noBackupDir()).markDone(KEY_DONE)
-            } catch (e: IOException) {
-            } catch (e: RuntimeException) {
-            } finally {
-                complete(fields)
-            }
+            // Sahiplik alındı: bundan sonra HİÇBİR yoldan teslimsiz çıkılmaz (finish artık no-op olurdu).
+            complete(fields)
         }
 
         /**

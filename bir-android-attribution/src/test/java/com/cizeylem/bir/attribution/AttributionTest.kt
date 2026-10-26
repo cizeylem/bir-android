@@ -36,16 +36,28 @@ class AttributionTest {
         dir.deleteRecursively()
     }
 
-    private class FakeSink(private val consent: Consent) : AttributionSink {
+    /**
+     * @param delivered gönderimin KALICI devir sonucu: kimlikli yolda "kuyruğa yazıldı", kimliksiz yolda "2xx".
+     * @param silent teslim sonucunu hiç bildirmeyen sink (çekirdek kapanmış): tur zaman aşımıyla kapanmalı.
+     */
+    private class FakeSink(
+        private val consent: Consent,
+        private val delivered: Boolean = true,
+        private val silent: Boolean = false,
+    ) : AttributionSink {
         var identified: Map<String, Any?>? = null
         var anonymous: Map<String, Any?>? = null
-        var consentAsked = 0
         override fun withConsent(task: (Consent) -> Unit) {
-            consentAsked++
             task(consent)
         }
-        override fun sendIdentified(fields: Map<String, Any?>) { identified = fields }
-        override fun sendAnonymous(fields: Map<String, Any?>) { anonymous = fields }
+        override fun sendIdentified(fields: Map<String, Any?>, onDelivered: (Boolean) -> Unit) {
+            identified = fields
+            if (!silent) onDelivered(delivered)
+        }
+        override fun sendAnonymous(fields: Map<String, Any?>, onDelivered: (Boolean) -> Unit) {
+            anonymous = fields
+            if (!silent) onDelivered(delivered)
+        }
     }
 
     private fun run(
@@ -56,8 +68,11 @@ class AttributionTest {
         installSource: String? = null,
         metaBlocks: CountDownLatch? = null,
         metaTimeoutMs: Long = 5_000,
+        delivered: Boolean = true,
+        silent: Boolean = false,
+        deliveryTimeoutMs: Long = 10_000,
     ): Pair<FakeSink, AttributionRun> {
-        val sink = FakeSink(consent)
+        val sink = FakeSink(consent, delivered, silent)
         var gaidConsent: Consent? = null
         val run = AttributionRun(
             context = ctx,
@@ -73,6 +88,7 @@ class AttributionTest {
             },
             collectGaid = { c -> gaidConsent = c; gaid },
             metaTimeoutMs = metaTimeoutMs,
+            deliveryTimeoutMs = deliveryTimeoutMs,
         )
         val done = CountDownLatch(1)
         sink.withConsent { c -> run.start(c) { done.countDown() } }
@@ -193,9 +209,54 @@ class AttributionTest {
         // withConsent'i hiç çağırmayan sink: çekirdek yoksa executor bile yaratılmamalı.
         val silent = object : AttributionSink {
             override fun withConsent(task: (Consent) -> Unit) = Unit
-            override fun sendIdentified(fields: Map<String, Any?>) = throw AssertionError("gönderilmemeliydi")
-            override fun sendAnonymous(fields: Map<String, Any?>) = throw AssertionError("gönderilmemeliydi")
+            override fun sendIdentified(fields: Map<String, Any?>, onDelivered: (Boolean) -> Unit) =
+                throw AssertionError("gönderilmemeliydi")
+            override fun sendAnonymous(fields: Map<String, Any?>, onDelivered: (Boolean) -> Unit) =
+                throw AssertionError("gönderilmemeliydi")
         }
         Attribution.start(ctx, null, silent)
+    }
+
+    @Test fun `teslim basarisizsa isaret yazilmaz ve sinyal yeniden gonderilir`() {
+        val first = run(
+            Consent(),
+            meta = mapOf("install_referrer" to "M"),
+            installSource = "com.android.vending",
+            delivered = false,
+        ).first
+        assertEquals("M", first.anonymous!!["meta_install_referrer"])
+
+        // İşaret yazılmadığı için aynı sinyaller yeniden okunup yeniden gönderilmeli:
+        // tekrar gönderim, kaybolan atıftan iyidir.
+        val second = run(
+            Consent(),
+            meta = mapOf("install_referrer" to "M"),
+            installSource = "com.android.vending",
+        ).first
+        assertEquals("M", second.anonymous!!["meta_install_referrer"])
+        assertEquals("com.android.vending", second.anonymous!!["install_source"])
+    }
+
+    @Test fun `Play isareti ancak teslimden sonra yazilir`() {
+        run(Consent(), play = mapOf("install_referrer" to "P"), delivered = false)
+        assertFalse(
+            "teslim edilmemiş referrer işaretlenemez",
+            AttributionState(dir).isDone("play_referrer"),
+        )
+
+        run(Consent(), play = mapOf("install_referrer" to "P"))
+        assertTrue("teslimden sonra işaret yazılmalı", AttributionState(dir).isDone("play_referrer"))
+    }
+
+    @Test fun `teslim onayi hic gelmezse tur kapanir ve isaret yazilmaz`() {
+        val (sink, run) = run(
+            Consent(),
+            play = mapOf("install_referrer" to "P"),
+            silent = true,
+            deliveryTimeoutMs = 200,
+        )
+        assertEquals("P", sink.anonymous!!["play_install_referrer"])
+        assertTrue("tur kapanmalı", run.terminated())
+        assertFalse(AttributionState(dir).isDone("play_referrer"))
     }
 }

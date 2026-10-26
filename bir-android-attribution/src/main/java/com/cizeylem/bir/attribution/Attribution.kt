@@ -13,6 +13,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -116,10 +117,13 @@ internal class AttributionRun(
     private val collectPlay: (ScheduledExecutorService, ScheduledExecutorService, (Map<String, Any?>?) -> Unit) -> Unit,
     private val collectGaid: (Consent) -> String?,
     private val metaTimeoutMs: Long = META_TIMEOUT_MS,
+    private val deliveryTimeoutMs: Long = DELIVERY_TIMEOUT_MS,
 ) {
     private val worker = daemon("cizeylem-attr")
     private val timer = daemon("cizeylem-attr-cb")
     private val finished = AtomicBoolean(false)
+    private val closed = AtomicBoolean(false)
+    @Volatile private var deliveryTimeout: ScheduledFuture<*>? = null
 
     // Yalnız [worker] thread'inden yazılır. Tek istisna, executor kapanmışken devreye giren
     // RejectedExecutionException yolu: orada en kötü ihtimalle bayat (boş) okunur ve gönderim atlanır.
@@ -170,30 +174,38 @@ internal class AttributionRun(
     }
 
     private fun merge(play: Map<String, Any?>?, consent: Consent, onDone: (() -> Unit)?) {
-        if (play != null) for ((k, v) in play) fields["play_$k"] = v
-        // Play'in işaretini PlayReferrerReader kendi yazar (yalnız gerçekten okuduğunda); burada yazılmaz.
+        if (play != null) {
+            for ((k, v) in play) fields["play_$k"] = v
+            // Play'in işareti de artık BURADA, teslimden sonra yazılır (Görev 14 düzeltmesi):
+            // okuyucu okuma anında yazsaydı, gönderim ağda düşünce referrer kalıcı olarak kaybolurdu.
+            marks += PlayReferrerReader.KEY_DONE
+        }
         finish(consent, onDone)
     }
 
+    /**
+     * Sahipliği alır ve turu gönderime devreder. Sahiplik alındıktan sonra kapanış ve teslim GARANTİDİR:
+     * ya teslim geri çağrısı ya da teslim zaman aşımı [close]'u çağırır, [close] da idempotenttir.
+     *
+     * İŞARET YAZIMI TESLİMDEN SONRADIR: `onDelivered(true)` gelmeden hiçbir "okundu" işareti yazılmaz.
+     * İşaretsiz kalan sinyal bir sonraki açılışta yeniden okunur — tekrar gönderim, kaybolan atıftan iyidir.
+     */
     private fun finish(consent: Consent, onDone: (() -> Unit)?) {
         if (!finished.compareAndSet(false, true)) return
-        // Sahiplik alındı: bundan sonra hangi yoldan çıkılırsa çıkılsın kapatma ve onDone GARANTİ (finally).
+        if (fields.isEmpty()) return close(onDone)
         try {
-            if (fields.isNotEmpty()) {
-                collectGaid(consent)?.let { fields["gaid"] = it }
-                route(consent)
-                markAll()
-            }
+            collectGaid(consent)?.let { fields["gaid"] = it }
         } catch (e: RuntimeException) {
-            Log.w(TAG, "attribution turu başarısız: ${e.javaClass.simpleName}")
-        } finally {
-            // shutdown() bloklamaz ve çalışmakta olan bu görevin bitmesine izin verir.
-            timer.shutdown()
-            worker.shutdown()
-            try {
-                onDone?.invoke()
-            } catch (e: RuntimeException) {
-            }
+            Log.w(TAG, "GAID okunamadı: ${e.javaClass.simpleName}")
+        }
+        // Teslim onayı hiç gelmezse (çekirdek kapandı, görev reddedildi) tur asılı kalmasın. Zaman aşımı
+        // İŞARET YAZMAZ: emin olunmayan teslimde kaybı değil, tekrarı seçiyoruz.
+        armDeliveryTimeout(onDone)
+        try {
+            route(consent) { delivered -> onDelivered(delivered, onDone) }
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "attribution gönderimi başarısız: ${e.javaClass.simpleName}")
+            close(onDone)
         }
     }
 
@@ -202,8 +214,49 @@ internal class AttributionRun(
      * üstüne eklenen kademedir; tek başına kimlikli gönderimi açmaz. `adSharing` yalnız GAID kapısıdır,
      * gönderim yolunu hiç etkilemez.
      */
-    private fun route(consent: Consent) {
-        if (consent.analytics && consent.attribution) sink.sendIdentified(fields) else sink.sendAnonymous(fields)
+    private fun route(consent: Consent, onDelivered: (Boolean) -> Unit) {
+        if (consent.analytics && consent.attribution) {
+            sink.sendIdentified(fields, onDelivered)
+        } else {
+            sink.sendAnonymous(fields, onDelivered)
+        }
+    }
+
+    /** Teslim onayı çekirdeğin thread'inde gelir: disk işi (işaret yazımı) işçiye devredilir. */
+    private fun onDelivered(delivered: Boolean, onDone: (() -> Unit)?) {
+        if (!delivered) {
+            Log.w(TAG, "attribution devredilemedi; işaret yazılmadı, sonraki açılışta yeniden denenecek")
+            return close(onDone)
+        }
+        try {
+            worker.execute {
+                markAll()
+                close(onDone)
+            }
+        } catch (e: RejectedExecutionException) {
+            close(onDone)
+        }
+    }
+
+    private fun armDeliveryTimeout(onDone: (() -> Unit)?) {
+        deliveryTimeout = try {
+            timer.schedule({ close(onDone) }, deliveryTimeoutMs, TimeUnit.MILLISECONDS)
+        } catch (e: RejectedExecutionException) {
+            null
+        }
+    }
+
+    /** Kapatma ve teslim; idempotent (zaman aşımı ile gerçek onay yarışabilir). */
+    private fun close(onDone: (() -> Unit)?) {
+        if (!closed.compareAndSet(false, true)) return
+        deliveryTimeout?.cancel(false)
+        // shutdown() bloklamaz ve çalışmakta olan görevin bitmesine izin verir.
+        timer.shutdown()
+        worker.shutdown()
+        try {
+            onDone?.invoke()
+        } catch (e: RuntimeException) {
+        }
     }
 
     private fun markAll() {
@@ -255,6 +308,9 @@ internal class AttributionRun(
         // Seçimimizdir: provider sorgusu normalde milisaniyeler sürer; 10 sn yavaş cihaza pay bırakır ama
         // turun (ve dolayısıyla Play okumasının) asılı kalmasını sınırlar.
         const val META_TIMEOUT_MS = 10_000L
+        // Teslim onayı için üst sınır. Kimlikli yolda onay kuyruğa yazımdır (milisaniyeler); kimliksiz
+        // yolda bir HTTP turu (Transport'un kendi zaman aşımları) beklenir. 60 sn ikisine de rahat yeter.
+        const val DELIVERY_TIMEOUT_MS = 60_000L
 
         fun daemon(name: String): ScheduledExecutorService =
             Executors.newSingleThreadScheduledExecutor { r ->

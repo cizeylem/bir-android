@@ -144,13 +144,16 @@ object Cizeylem : AttributionSink {
     }
 
     /** Alanlar `cz_attribution` event'i olarak normal kuyruğa girer (kimlikli, `/v1/batch`). */
-    override fun sendIdentified(fields: Map<String, Any?>) {
-        core?.sendAttributionIdentified(fields)
+    override fun sendIdentified(fields: Map<String, Any?>, onDelivered: (Boolean) -> Unit) {
+        // Çekirdek yoksa devir OLMADI: çağıran işareti yazmamalı, sinyal sonraki açılışta yeniden okunmalı.
+        val c = core ?: return onDelivered(false)
+        c.sendAttributionIdentified(fields, onDelivered)
     }
 
     /** Alanlar `/v1/attribution/anon`'a gider; gövdede `device_id`/`user_id` bulunmaz. */
-    override fun sendAnonymous(fields: Map<String, Any?>) {
-        core?.sendAttributionAnonymous(fields)
+    override fun sendAnonymous(fields: Map<String, Any?>, onDelivered: (Boolean) -> Unit) {
+        val c = core ?: return onDelivered(false)
+        c.sendAttributionAnonymous(fields, onDelivered)
     }
 
     // --- testler için ------------------------------------------------------------------------------

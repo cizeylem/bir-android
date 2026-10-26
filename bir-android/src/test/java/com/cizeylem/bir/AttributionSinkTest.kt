@@ -27,6 +27,7 @@ class AttributionSinkTest {
     private val anon = ArrayList<String>()
     private var clock = 1_700_000_000_000L
     private var ids = 0
+    private var anonResponse = Response(Outcome.OK, null)
 
     private fun dir() = File(app.noBackupFilesDir, "cizeylem")
 
@@ -52,7 +53,7 @@ class AttributionSinkTest {
                 scheduler = sch,
                 mainPoster = { it() },
                 sender = { body -> batches.add(body); Response(Outcome.OK, null) },
-                anonSender = { body -> anon.add(body); Response(Outcome.OK, null) },
+                anonSender = { body -> anon.add(body); anonResponse },
             ),
         )
     }
@@ -79,8 +80,10 @@ class AttributionSinkTest {
 
     @Test fun `kimlikli gonderim device_id ile batch ucuna gider`() {
         grant(Consent(analytics = true, attribution = true))
-        Cizeylem.sendIdentified(fields)
+        val delivered = ArrayList<Boolean>()
+        Cizeylem.sendIdentified(fields) { delivered.add(it) }
         sch.run()
+        assertEquals("kuyruğa yazıldı = kalıcı devir tamam", listOf(true), delivered)
         Cizeylem.flush()
         sch.run()
         assertTrue("anon uç kullanılmamalı", anon.isEmpty())
@@ -92,8 +95,10 @@ class AttributionSinkTest {
 
     @Test fun `kimliksiz gonderim anon uca gider ve govdede kimlik bulunmaz`() {
         grant(Consent(attribution = true))
-        Cizeylem.sendAnonymous(fields + mapOf("device_id" to "sızıntı", "user_id" to "sızıntı"))
+        val delivered = ArrayList<Boolean>()
+        Cizeylem.sendAnonymous(fields + mapOf("device_id" to "sızıntı", "user_id" to "sızıntı")) { delivered.add(it) }
         sch.run()
+        assertEquals("2xx = kalıcı devir tamam", listOf(true), delivered)
         val body = anon.single()
         assertTrue(batches.isEmpty())
         val o = JSONObject(body)
@@ -106,9 +111,29 @@ class AttributionSinkTest {
 
     @Test fun `analytics kapaliyken kimlikli istek anon uca duser`() {
         // Rıza yokken kuyruk ve device_id yoktur; kimlikli gönderim sessizce kaybolmak yerine anon'a düşer.
-        Cizeylem.sendIdentified(fields)
+        val delivered = ArrayList<Boolean>()
+        Cizeylem.sendIdentified(fields) { delivered.add(it) }
         sch.run()
+        assertEquals(listOf(true), delivered)
         assertTrue(batches.isEmpty())
         assertEquals("utm_source=x", JSONObject(anon.single()).getString("play_install_referrer"))
+    }
+
+    @Test fun `kimliksiz gonderim 2xx disinda teslim edilmis sayilmaz`() {
+        grant(Consent(attribution = true))
+        anonResponse = Response(Outcome.RETRY, null)
+        val delivered = ArrayList<Boolean>()
+        Cizeylem.sendAnonymous(fields) { delivered.add(it) }
+        sch.run()
+        assertEquals(1, anon.size)
+        assertEquals("2xx gelmediyse devir tamam değildir", listOf(false), delivered)
+    }
+
+    @Test fun `cekirdek yoksa teslim edilmedi denir`() {
+        Cizeylem.shutdownForTest()
+        val delivered = ArrayList<Boolean>()
+        Cizeylem.sendIdentified(fields) { delivered.add(it) }
+        Cizeylem.sendAnonymous(fields) { delivered.add(it) }
+        assertEquals(listOf(false, false), delivered)
     }
 }

@@ -251,32 +251,46 @@ internal class Core(
      * `analytics` o an kapalıysa kuyruk ve kimlik yoktur: sinyali sessizce düşürmek yerine kimliksiz uca
      * düşülür (rıza kademesi zaten modülde denetlendi; burası yarış durumuna karşı son savunma).
      */
-    fun sendAttributionIdentified(fields: Map<String, Any?>) {
+    fun sendAttributionIdentified(fields: Map<String, Any?>, onDelivered: (Boolean) -> Unit) {
         val time = now()
         val snapshot = LinkedHashMap(fields)
         scheduler.post {
             if (ready() && queue != null) {
-                write(ATTRIBUTION, time, uuid(), snapshot, null, null)
+                // KALICI DEVİR = kuyruğa yazıldı. Gönderimin ağda başarılı olmasını beklemeyiz: kuyruk
+                // dayanıklıdır ve kendi backoff'lu tekrarı var, oraya girmek sinyalin kaybolmayacağı andır.
+                val queued = write(ATTRIBUTION, time, uuid(), snapshot, null, null)
+                deliver(onDelivered, queued)
             } else {
-                postAnonymous(time, snapshot)
+                postAnonymous(time, snapshot, onDelivered)
             }
         }
     }
 
     /** Kimliksiz attribution: `/v1/attribution/anon`, gövdede hiçbir kimlik alanı yok (SPEC §7). */
-    fun sendAttributionAnonymous(fields: Map<String, Any?>) {
+    fun sendAttributionAnonymous(fields: Map<String, Any?>, onDelivered: (Boolean) -> Unit) {
         val time = now()
         val snapshot = LinkedHashMap(fields)
-        scheduler.post { postAnonymous(time, snapshot) }
+        scheduler.post { postAnonymous(time, snapshot, onDelivered) }
+    }
+
+    /** Geri çağrıdaki istisna SDK thread'ini düşürmemeli. */
+    private fun deliver(onDelivered: (Boolean) -> Unit, result: Boolean) {
+        try {
+            onDelivered(result)
+        } catch (e: RuntimeException) {
+            warn("attribution teslim geri çağrısı başarısız: $e")
+        }
     }
 
     /**
-     * Kuyruk YOK: rızasız kalıcı iz bırakamayız (SPEC §5), bu yüzden tek deneme. Başarısızlık duyurulur;
-     * sinyal yeniden denenmez — modül işaretini yalnız gönderim denendikten sonra yazar, ama diskte
-     * bekleyen bir kopya tutmak rızasız kalıcı iz olurdu.
+     * Kuyruk YOK: rızasız kalıcı iz bırakamayız (SPEC §5), bu yüzden tek deneme ve diskte bekleyen kopya yok.
+     *
+     * KALICI DEVİR yalnız **2xx**'tir: başka her sonuçta (ağ hatası, 4xx, 5xx) `false` bildirilir, modül
+     * işareti yazmaz ve sinyal bir sonraki açılışta yeniden okunup yeniden gönderilir. Tekrar gönderim,
+     * kaybolan atıftan iyidir.
      */
-    private fun postAnonymous(sentAt: Long, fields: Map<String, Any?>) {
-        if (fields.isEmpty()) return
+    private fun postAnonymous(sentAt: Long, fields: Map<String, Any?>, onDelivered: (Boolean) -> Unit) {
+        if (fields.isEmpty()) return deliver(onDelivered, false)
         if (!booted) bootstrap()
         val send = anonSender ?: Transport(config.endpoint, config.writeKey, ANON_PATH)::send
         val body = EventJson.attributionAnon(sentAt, fields)
@@ -284,9 +298,10 @@ internal class Core(
             send(body)
         } catch (e: RuntimeException) {
             warn("kimliksiz attribution gönderilemedi: $e")
-            return
+            return deliver(onDelivered, false)
         }
         if (res.outcome != Outcome.OK) warn("kimliksiz attribution reddedildi: ${res.outcome}")
+        deliver(onDelivered, res.outcome == Outcome.OK)
     }
 
     // --- kurulum ---------------------------------------------------------------------------------
@@ -484,6 +499,7 @@ internal class Core(
         }
     }
 
+    /** @return event kuyruğa gerçekten yazıldıysa `true` (attribution "kalıcı devir" ölçütü). */
     private fun write(
         name: String,
         time: Long,
@@ -491,16 +507,16 @@ internal class Core(
         props: Map<String, Any?>?,
         extraOps: PropertyOps?,
         userIdArg: String?,
-    ) {
-        val q = queue ?: return
+    ): Boolean {
+        val q = queue ?: return false
         val distinct = userId ?: ensureDeviceId() ?: run {
             droppedNoIdentity++
             warn("cihaz kimliği yok: event düşürüldü")
             refreshStats()
-            return
+            return false
         }
-        val session = sessionStore?.current() ?: return
-        val context = contextProvider?.get(consent, if (foreground) "foreground" else "background") ?: return
+        val session = sessionStore?.current() ?: return false
+        val context = contextProvider?.get(consent, if (foreground) "foreground" else "background") ?: return false
         // Bekleyen kullanıcı özellikleri ANCAK event gerçekten kuyruğa girecekse tüketilir: yukarıdaki
         // erken dönüşlerde biriken $set/$set_once/$add/$unset olduğu gibi kalır.
         val ops = takePending(extraOps)
@@ -530,7 +546,7 @@ internal class Core(
             warn("event kuyruğa yazılamadı: $failure")
             // Host'un setUserProperties çağrısı sessizce yutulmasın: bekleyenler geri konur.
             restorePending(ops)
-            return
+            return false
         }
         val overflow = q.droppedCount() - droppedBefore
         if (overflow > 0) warn("kuyruk doldu: $overflow event düşürüldü")
@@ -538,6 +554,7 @@ internal class Core(
         if (userIdArg != null) setUserId(userIdArg)
         refreshStats()
         if (q.size() >= config.flushAt) drain()
+        return true
     }
 
     /**

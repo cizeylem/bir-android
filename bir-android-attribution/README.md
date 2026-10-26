@@ -54,3 +54,13 @@ GAID **üç kapıdan** geçerse okunur:
 | Diğer her durum (rıza yok ya da yalnız `attribution`) | `POST /v1/attribution/anon`; gövdede `device_id`/`user_id` **yok** |
 
 `adSharing` yalnız GAID kapısıdır; tek başına gönderimi açmaz.
+
+## Tekrar gönderim
+
+Bir sinyalin "okundu" işareti yalnız **kalıcı devirden sonra** yazılır: kimlikli yolda alanlar dayanıklı
+kuyruğa yazıldığında, kimliksiz yolda sunucudan **2xx** geldiğinde. Başka her sonuçta işaret yazılmaz ve
+sinyal bir sonraki açılışta yeniden okunup yeniden gönderilir. Sunucunun aynı ham referrer'ı
+tekilleştirmesi beklenir; tekrar gönderim, kaybolan atıftan iyidir.
+
+Gövde biçimi ve alan adları (`play_` / `meta_` ön ekleri, `cz_attribution` event adı) için
+`docs/AS-BUILT.md` → "Attribution protokolü: bizim icatlarımız".
