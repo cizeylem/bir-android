@@ -1,2 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Olmadan her gönderim IOException → RETRY olur ve SDK sonsuza dek sessizce yeniden dener; host
+      gerçek ağ hatasından ayırt edemez. Normal izindir: kurulumda verilir, kullanıcıya sorulmaz ve
+      Play Console'da beyan gerektirmez — bu yüzden AD_ID'nin aksine kütüphanede bildirilebilir.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>
