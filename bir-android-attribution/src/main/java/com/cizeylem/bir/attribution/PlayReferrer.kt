@@ -165,9 +165,16 @@ internal class PlayReferrerReader(
             // Sahipliği ÖNCE al, sonra işareti yaz: kontrol-sonra-yaz penceresinde zaman aşımı callback'e null verip
             // işareti "okundu" bırakırdı ve referrer bir daha hiç okunmazdı. Kaybeden hiçbir şey yazmaz.
             if (!finished.compareAndSet(false, true)) return
-            // Yazılamayan işaret referrer'ı atmak için sebep değil: göndermek, bir kez daha okumaktan iyidir.
-            try { AttributionState(noBackupDir()).markDone(KEY_DONE) } catch (e: IOException) { }
-            complete(fields)
+            // Sahiplik alındı: bundan sonra HİÇBİR yoldan teslimsiz çıkılmaz (finish artık no-op, callback hiç gelmezdi).
+            // Yazılamayan işaret (IOException ya da SecurityException gibi RuntimeException) referrer'ı atmak için
+            // sebep değil: göndermek, bir kez daha okumaktan iyidir.
+            try {
+                AttributionState(noBackupDir()).markDone(KEY_DONE)
+            } catch (e: IOException) {
+            } catch (e: RuntimeException) {
+            } finally {
+                complete(fields)
+            }
         }
 
         /**

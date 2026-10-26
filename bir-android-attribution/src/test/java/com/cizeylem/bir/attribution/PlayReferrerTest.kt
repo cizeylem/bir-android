@@ -385,18 +385,36 @@ class PlayReferrerTest {
         assertEquals("test-timer", dc.cbThread.get().name)
     }
 
-    @Test fun `zaman asimi markDone'dan hemen once ates ederse isaret ve callback tutarli kalir`() {
+    @Test fun `zaman asimi markDone cozumlemesi sirasinda ates ederse sahiplenen teslim eder ve isaret yazilir`() {
         installPlay()
         val calls = java.util.concurrent.atomic.AtomicInteger()
+        val reachedMark = java.util.concurrent.atomic.AtomicBoolean(false)
         val r = Result()
-        // noBackupDir ikinci kez markDone için çözülür (kontrol geçildikten sonra): orada zaman aşımını geçirt.
-        reader(timeoutMs = 150, noBackup = { if (calls.incrementAndGet() >= 2) Thread.sleep(500); dir }).read(r.cb)
+        // noBackupDir ikinci kez markDone için çözülür (sahiplik alındıktan sonra): orada zaman aşımını geçirt.
+        // Süreler iri: yavaş makinede fetch'in CAS'ı zaman aşımından geç kalıp testi boşuna geçirmesin.
+        reader(timeoutMs = 1000, noBackup = {
+            if (calls.incrementAndGet() >= 2) { reachedMark.set(true); Thread.sleep(1400) }
+            dir
+        }).read(r.cb)
         waitBound()
         ctx.conn!!.onServiceConnected(ComponentName("a", "b"), FakeService(fullBundle()))
         val got = r.await()
-        Thread.sleep(700) // markDone'ın bitmesini bekle
-        // Değişmez: işaret yazıldıysa referrer teslim edilmiş olmalı (aksi halde atıf kalıcı kaybolur).
-        assertEquals("işaret ile teslim tutarsız", AttributionState(dir).isDone("play_referrer"), got != null)
+        assertTrue("markDone aşamasına gelinmedi (test anlamsız)", reachedMark.get())
+        assertTrue("sahiplenen referrer'ı teslim etmeli", got != null)
+        assertTrue(AttributionState(dir).isDone("play_referrer"))
+        assertEquals(1, r.calls.get())
+    }
+
+    @Test fun `sahiplik alindiktan sonra isaret yazimi RuntimeException atsa da callback gelir ve baglanti birakilir`() {
+        installPlay()
+        val calls = java.util.concurrent.atomic.AtomicInteger()
+        val r = Result()
+        reader(noBackup = { if (calls.incrementAndGet() >= 2) throw SecurityException("depo yok") else dir }).read(r.cb)
+        waitBound()
+        ctx.conn!!.onServiceConnected(ComponentName("a", "b"), FakeService(fullBundle()))
+        // Referrer alındı; işaret yazılamadı ama teslim edilmeli (bir kez daha okumak, kaybetmekten iyi).
+        assertTrue(r.await() != null)
+        assertEquals(1, ctx.unbound)
         assertEquals(1, r.calls.get())
     }
 
