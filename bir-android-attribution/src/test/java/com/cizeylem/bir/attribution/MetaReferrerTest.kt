@@ -20,6 +20,8 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowContentResolver
+import org.robolectric.shadows.ShadowLog
+import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -163,11 +165,50 @@ class MetaReferrerTest {
         val ok = FakeProvider { row("blob") }
         install("com.facebook.katana", fbAuth, ok)
         MetaReferrer.read(context, appId)
-        assertTrue(ok.cursors.all { it.isClosed })
+        assertTrue(ok.cursors.isNotEmpty() && ok.cursors.all { it.isClosed })
         val empty = FakeProvider { row("") }
         install("com.instagram.android", igAuth, empty)
         ShadowContentResolver.registerProviderInternal(fbAuth, empty)
         MetaReferrer.read(context, appId)
         assertTrue(empty.cursors.isNotEmpty() && empty.cursors.all { it.isClosed })
+    }
+
+    private fun warns(): List<String> =
+        ShadowLog.getLogsForTag("CizeylemMeta").filter { it.type == android.util.Log.WARN }.map { it.msg }
+
+    @Test fun `referrer BLOB ise sonuc yok ama sutun adi ve tipiyle uyarilir`() {
+        ShadowLog.clear()
+        install("com.facebook.katana", fbAuth, FakeProvider { row(byteArrayOf(1, 2, 3)) })
+        assertNull(MetaReferrer.read(context, appId))
+        val w = warns().filter { it.contains("install_referrer") }
+        assertTrue(w.toString(), w.any { it.contains("type=4") })
+    }
+
+    @Test fun `referrer sutunu yoksa uyarilir`() {
+        ShadowLog.clear()
+        install("com.facebook.katana", fbAuth, FakeProvider {
+            MatrixCursor(arrayOf("baska")).apply { addRow(arrayOf<Any?>("x")) }
+        })
+        assertNull(MetaReferrer.read(context, appId))
+        assertTrue(warns().toString(), warns().any { it.contains("install_referrer") && it.contains("yok") })
+    }
+
+    @Test fun `is_ct ve actual_timestamp tip uyusmazligi uyarilir, referrer icerigi loglanmaz`() {
+        ShadowLog.clear()
+        install("com.facebook.katana", fbAuth, FakeProvider { row("GIZLI-BLOB", "bir", 1.5) })
+        MetaReferrer.read(context, appId)
+        val w = warns()
+        assertTrue(w.toString(), w.any { it.contains("is_ct") && it.contains("type=3") })
+        assertTrue(w.toString(), w.any { it.contains("actual_timestamp") && it.contains("type=2") })
+        assertTrue(ShadowLog.getLogs().none { it.msg.contains("GIZLI-BLOB") })
+    }
+
+    @Test fun `kod ve manifest ayni uc paketi icerir`() {
+        val expected = listOf("com.facebook.katana", "com.instagram.android", "com.facebook.lite")
+        // Kod sabitleri tek başına literal'lerle de sabitlenir: ikisi birden yanlışlanırsa yakalanır.
+        assertEquals(expected, MetaReferrer.packageNames)
+        val manifest = File("src/main/AndroidManifest.xml").readText()
+        val declared = Regex("<package\\s+android:name=\"([^\"]+)\"").findAll(manifest).map { it.groupValues[1] }.toSet()
+        assertTrue("manifest <package> eksik: $declared", declared.containsAll(MetaReferrer.packageNames))
     }
 }

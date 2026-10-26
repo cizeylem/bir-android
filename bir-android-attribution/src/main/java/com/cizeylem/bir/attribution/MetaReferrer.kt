@@ -42,6 +42,9 @@ internal object MetaReferrer {
         Source("Lite", "com.facebook.lite", "com.facebook.lite.provider.InstallReferrerProvider"),
     )
 
+    /** Manifest `<queries>` ile tutarlılık testi için. */
+    internal val packageNames: List<String> get() = SOURCES.map { it.pkg }
+
     /** Ham alanlar (`install_referrer`, varsa `is_ct`, `actual_timestamp`) ya da sonuç yoksa null. */
     fun read(context: Context, facebookAppId: String?): Map<String, Any?>? {
         val appId = facebookAppId?.trim()
@@ -82,23 +85,30 @@ internal object MetaReferrer {
     }
 
     // Tip kontrolü: getString/getInt tip uyuşmazlığında sessizce dönüştürür; beklenmedik tipte alan yazılmamalı.
-    private fun readString(c: Cursor, col: String): String? {
+    // Uyuşmazlık SESSİZ geçmez: provider cevap verip yalnız tip yüzünden atıf kaybolursa tek iz bu log'dur.
+    // Log'a yalnız sütun adı ve Cursor.FIELD_TYPE_* sayısı girer; değerin kendisi asla.
+    private fun readTyped(c: Cursor, col: String, expectedType: Int): Int? {
         val i = c.getColumnIndex(col)
-        if (i < 0 || c.getType(i) != Cursor.FIELD_TYPE_STRING) return null
-        return c.getString(i)
+        if (i < 0) {
+            Log.w(TAG, "Sütun yok: $col")
+            return null
+        }
+        val type = c.getType(i)
+        if (type != expectedType) {
+            Log.w(TAG, "Beklenmedik sütun tipi: $col type=$type (beklenen $expectedType); alan atlandı")
+            return null
+        }
+        return i
     }
 
-    private fun readInt(c: Cursor, col: String): Int? {
-        val i = c.getColumnIndex(col)
-        if (i < 0 || c.getType(i) != Cursor.FIELD_TYPE_INTEGER) return null
-        return c.getInt(i)
-    }
+    private fun readString(c: Cursor, col: String): String? =
+        readTyped(c, col, Cursor.FIELD_TYPE_STRING)?.let { c.getString(it) }
 
-    private fun readLong(c: Cursor, col: String): Long? {
-        val i = c.getColumnIndex(col)
-        if (i < 0 || c.getType(i) != Cursor.FIELD_TYPE_INTEGER) return null
-        return c.getLong(i)
-    }
+    private fun readInt(c: Cursor, col: String): Int? =
+        readTyped(c, col, Cursor.FIELD_TYPE_INTEGER)?.let { c.getInt(it) }
+
+    private fun readLong(c: Cursor, col: String): Long? =
+        readTyped(c, col, Cursor.FIELD_TYPE_INTEGER)?.let { c.getLong(it) }
 
     @Suppress("DEPRECATION")
     private fun logVersion(context: Context, source: Source) {
