@@ -39,7 +39,7 @@ hiç açmasa bile. SDK izni çalışma anında denetler; yoksa GAID'i sessizce a
 
 GAID **üç kapıdan** geçerse okunur:
 
-1. `Consent.adSharing` açık,
+1. `Consent.adSharing` **ve** kimlikli yolu açan `analytics` + `attribution` açık,
 2. `com.google.android.gms.permission.AD_ID` izni verilmiş,
 3. cihazda `isLimitAdTrackingEnabled == false`.
 
@@ -51,9 +51,11 @@ GAID **üç kapıdan** geçerse okunur:
 | Rıza | Yol |
 |---|---|
 | `analytics` **ve** `attribution` | `cz_attribution` event'i, normal kuyruk, `POST /v1/batch`, `device_id` ile |
-| Diğer her durum (rıza yok ya da yalnız `attribution`) | `POST /v1/attribution/anon`; gövdede `device_id`/`user_id` **yok** |
+| Diğer her durum (rıza yok ya da yalnız `attribution`) | `POST /v1/attribution/anon`; gövdede `device_id`/`user_id`/`distinct_id`/`gaid` **yok** |
 
-`adSharing` yalnız GAID kapısıdır; tek başına gönderimi açmaz.
+`adSharing` yalnız GAID kapısıdır; tek başına gönderimi açmaz. **GAID yalnız kimlikli yolda toplanır:**
+`adSharing` açık olsa bile, `analytics` + `attribution` yoksa GMS'e hiç bağlanılmaz ve kimliksiz gövdeye
+reklam kimliği girmez — o uç sözleşmesi gereği hiçbir kalıcı kimlik taşıyamaz.
 
 ## Tekrar gönderim
 

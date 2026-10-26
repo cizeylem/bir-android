@@ -6,10 +6,10 @@
 
 | | Bayt | KB |
 |---|---|---|
-| `bir-android-release.aar` | **103.230** | **100,81** |
+| `bir-android-release.aar` | **107.959** | **105,43** |
 | Sınır | 153.600 | 150 |
 
-Sınırın altında (yaklaşık 49 KB pay). Betik sınır aşılırsa 1 ile çıkar.
+Sınırın altında (yaklaşık 45 KB pay). Betik sınır aşılırsa 1 ile çıkar.
 
 ## minSdk 21 gerekçesi
 
@@ -66,7 +66,7 @@ geri kalanı normal event protokolüdür (SPEC §2), yani `distinct_id`, `contex
       "time": 1761499999000,
       "insert_id": "b7e1...",
       "session_id": "1761499990000",
-      "context": { "library": "bir-android", "library_version": "0.1.0", "...": "..." },
+      "context": { "lib": "bir-android", "lib_version": "0.1.0", "...": "..." },
       "props": {
         "install_source": "com.android.vending",
         "meta_install_referrer": "AbCdEf...==",
@@ -86,7 +86,13 @@ geri kalanı normal event protokolüdür (SPEC §2), yani `distinct_id`, `contex
 ### 3. Kimliksiz gövde — `POST /v1/attribution/anon`
 
 Düz bir JSON nesnesi: `sent_at` (duvar saati, ms) + ham alanlar. Sarmalayıcı yok, dizi yok.
-`device_id`, `user_id` ve `distinct_id` anahtarları `EventJson.attributionAnon`'da **ayrıca süzülür**.
+`device_id`, `user_id`, `distinct_id` ve `gaid` anahtarları `EventJson.attributionAnon`'da **ayrıca
+süzülür** (`IDENTITY_KEYS`).
+
+**GAID BU UÇTA HİÇ BULUNMAZ.** Cihaz kapsamlı ve kalıcı bir reklam kimliğidir; bu uca girseydi buradaki
+kayıtlar yeniden kimliklendirilebilir olurdu. `adSharing` rızası tek başına açık olsa bile GAID toplanmaz:
+toplama `AttributionRun.route`'un yalnız kimlikli dalında yapılır, süzme son savunma katmanıdır. Sunucu
+tarafı bu ucun kayıtlarını **kimliksiz** varsayabilir.
 
 ```json
 {
@@ -98,8 +104,7 @@ Düz bir JSON nesnesi: `sent_at` (duvar saati, ms) + ham alanlar. Sarmalayıcı 
   "play_referrer_click_timestamp_seconds": 1761400001,
   "play_install_begin_timestamp_seconds": 1761400003,
   "play_google_play_instant": false,
-  "play_install_version": "1.2.3",
-  "gaid": "38400000-8cf0-11bd-b23e-10b96e40000d"
+  "play_install_version": "1.2.3"
 }
 ```
 
@@ -114,10 +119,40 @@ sinyal bir sonraki açılışta **yeniden gönderilir**. Kimliksiz uçta `insert
 anahtarı YOK; sunucunun aynı ham referrer'ı tekilleştirmesi gerekir. (Tekrar gönderim bilinçli seçimdir:
 kaybolan atıf geri gelmez.)
 
+## Rızasız kalıcı iz: tek istisna `attr_state` (BİLİNÇLİ KARAR)
+
+SPEC §5'in "rızasız kalıcı iz bırakılmaz" kuralı **çekirdekte istisnasızdır**: `Cizeylem` rıza yokken ne
+`<noBackupDir>/cizeylem/` dizinini yaratır, ne kuyruk, ne `device_id`, ne oturum dosyası yazar
+(`CizeylemTest` → "rıza yokken çekirdek init-track-flush hiçbir dosya oluşturmaz").
+
+Attribution modülü bir istisna yazar ve bu bilinçlidir:
+
+| | |
+|---|---|
+| Dosya | `<noBackupDir>/cizeylem/attr_state` (dizini bu yazım yaratır) |
+| İçerik | Sinyal başına tek bir boolean: `{"play_referrer": true, "meta": true, …}` |
+| Ne DEĞİL | Kimlik değil. Kullanıcıya ait hiçbir değer, hiçbir rastgele kimlik, hiçbir zaman damgası yok |
+| Ne zaman | Yalnız **kalıcı devirden sonra** (kimliksiz yolda sunucudan 2xx) |
+| Rıza geri alınınca | Silinmez (çekirdeğin `clear()`'ı yalnız kendi dosyalarını siler) |
+
+Gerekçe: işaret yazılmasaydı referrer HER açılışta yeniden okunup aynı kimliksiz sinyal yeniden
+gönderilirdi. Sunucuda tekrarlanan bir sinyal akışı, diskteki tek bir booleandan daha fazla iz bırakır —
+ve kullanıcı için daha kötüdür. "Davranışı koru, iddiayı kesinleştir" kararı verildi; `AttributionSink.
+sendAnonymous` ve `Core.postAnonymous` KDoc'ları buna göre yazıldı.
+
+## `Cizeylem : AttributionSink` genel yüzeyde (BİLİNÇLİ KARAR, 0.1.0)
+
+`withConsent` / `sendIdentified` / `sendAnonymous` genel API'de görünür: Kotlin'de bir arayüz uygulaması
+`internal` olamaz, attribution modülü ise ayrı bir Gradle modülü olduğu için çekirdeğin `internal`
+üyelerini göremez. Rıza açısından delik yok (üçü de çekirdeğin rıza kapısından geçer), ama 0.1.0'ın
+kalıcı sözleşmesine giriyor. Bu turda yeniden yapılandırılmadı; bunun yerine KDoc'larına "SDK iç
+kullanımı içindir, kararlı API değildir" notu kondu ve kök `README.md`'deki genel API listesine
+alınmadılar. 1.0 öncesi yeniden ele alınabilir.
+
 ## Ölçülen kabul kriterleri (SPEC §8)
 
-- Birim testler: 218 test, 0 hata (çekirdek 149, attribution 69).
-- AAR ≤ 150 KB: 100,81 KB.
+- Birim testler: 224 test, 0 hata (çekirdek 154, attribution 70).
+- AAR ≤ 150 KB: 105,43 KB.
 - StrictMode: `StrictModeTest` (`ThreadPolicy` + `VmPolicy`, `detectAll().penaltyDeath()`) altında
   `initialize → setConsent → track → flush` ihlalsiz geçti. Test ilk koşuda GERÇEK bir ihlali yakaladı:
   `ContextProvider.screen()` Application bağlamından `WindowManager` alıyordu
