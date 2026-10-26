@@ -231,6 +231,26 @@ class CizeylemTest {
         assertNull(Cizeylem.getDistinctId())
     }
 
+    @Test fun `oturum ya da ortam kurulmamissa dusen event sayilir`() {
+        init()
+        grant()
+        // Üretimde oturum/ortam kuyrukla birlikte kurulur; yine de bu dal sessiz düşüş üretmemeli:
+        // "sayılmayan düşüş" SDK çalışıyor görünürken hiçbir şey toplamadığını gizler.
+        nullOutCoreField("sessionStore")
+        val before = Cizeylem.stats().dropped
+        Cizeylem.track("kayip")
+        sch.run()
+        assertTrue("event gönderilmemeli", sent.isEmpty())
+        assertEquals("düşüş sayaca girmeli", before + 1, Cizeylem.stats().dropped)
+    }
+
+    /** Çekirdeğin özel alanını testten boşaltır: bu dalın başka bir tetikleyicisi yoktur. */
+    private fun nullOutCoreField(name: String) {
+        val coreField = Cizeylem.javaClass.getDeclaredField("core").apply { isAccessible = true }
+        val core = coreField.get(Cizeylem)!!
+        core.javaClass.getDeclaredField(name).apply { isAccessible = true }.set(core, null)
+    }
+
     @Test fun `riza geri alininca kuyruk ve device_id silinir`() {
         init()
         grant()

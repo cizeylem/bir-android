@@ -77,6 +77,10 @@ internal class Core(
     // yoksa SDK "çalışıyor" görünürken hiçbir şey toplamadığını kimse fark etmez.
     private var droppedNoIdentity = 0
 
+    // Oturum ya da ortam sağlayıcısı kurulmadığı için düşen event'ler. Aynı sınıf: sessiz düşüş, SDK
+    // "çalışıyor" görünürken hiçbir şey toplamadığını gizler. `droppedNoIdentity` ile aynı kovaya yazılır.
+    private var droppedNoContext = 0
+
     private var pendingSet: LinkedHashMap<String, Any?>? = null
     private var pendingSetOnce: LinkedHashMap<String, Any?>? = null
     private var pendingUnset: ArrayList<String>? = null
@@ -470,6 +474,7 @@ internal class Core(
         distinctIdCache = null
         clearPending()
         droppedNoIdentity = 0
+        droppedNoContext = 0
         statsCache = EMPTY_STATS
         if (d == null) return
         File(d, "queue").deleteRecursively()
@@ -516,8 +521,9 @@ internal class Core(
             refreshStats()
             return false
         }
-        val session = sessionStore?.current() ?: return false
-        val context = contextProvider?.get(consent, if (foreground) "foreground" else "background") ?: return false
+        val session = sessionStore?.current() ?: return dropNoContext("oturum deposu yok")
+        val context = contextProvider?.get(consent, if (foreground) "foreground" else "background")
+            ?: return dropNoContext("ortam sağlayıcısı yok")
         // Bekleyen kullanıcı özellikleri ANCAK event gerçekten kuyruğa girecekse tüketilir: yukarıdaki
         // erken dönüşlerde biriken $set/$set_once/$add/$unset olduğu gibi kalır.
         val ops = takePending(extraOps)
@@ -591,7 +597,16 @@ internal class Core(
 
     private fun refreshStats() {
         val s = dispatcher?.stats() ?: EMPTY_STATS
-        statsCache = if (droppedNoIdentity == 0) s else s.copy(dropped = s.dropped + droppedNoIdentity)
+        val extra = droppedNoIdentity + droppedNoContext
+        statsCache = if (extra == 0) s else s.copy(dropped = s.dropped + extra)
+    }
+
+    /** Sayılmayan düşüş olmaz: `droppedNoIdentity` ile aynı desen, `stats().dropped` içinde görünür. */
+    private fun dropNoContext(reason: String): Boolean {
+        droppedNoContext++
+        warn("$reason: event düşürüldü")
+        refreshStats()
+        return false
     }
 
     private fun ready(): Boolean {
