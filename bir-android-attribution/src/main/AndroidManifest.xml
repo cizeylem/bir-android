@@ -7,10 +7,13 @@
     <!--
       Android 11+ paket görünürlüğü. AAR'ın targetSdk'sı 22 olduğundan kendi manifest'inde <queries> yoktu;
       bizde var, çünkü görünürlük yoksa queryIntentServices boş döner ve referrer sessizce hiç okunmaz.
-      Görev 13 Meta uygulamaları (katana/instagram/lite) için buraya kendi <package> girdilerini ekler.
+      Meta install referrer için katana/instagram/lite <package> girdileri; <provider> girdisi gerekmez.
     -->
     <queries>
         <package android:name="com.android.vending" />
+        <package android:name="com.facebook.katana" />
+        <package android:name="com.instagram.android" />
+        <package android:name="com.facebook.lite" />
         <intent>
             <action android:name="com.google.android.finsky.BIND_GET_INSTALL_REFERRER_SERVICE" />
         </intent>
