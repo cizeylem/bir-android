@@ -8,27 +8,32 @@ import android.os.Bundle
 import android.os.IBinder
 import android.os.Parcel
 import android.os.RemoteException
+import java.io.File
 import java.io.IOException
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Genel kapı: ilk açılışta bir kez okur. İşçi thread tembel ve daemon; yalnız bu iş için tek thread.
+ * Genel kapı: ilk açılışta bir kez okur. İki daemon thread, tembel: `cizeylem-referrer` (disk + Binder, bloklayabilir)
+ * ve `cizeylem-referrer-cb` (zaman aşımı + callback teslimi; Binder'a hiç dokunmaz).
  * (Executor sahipliği Görev 14'te Cizeylem ile birleştirilecek.)
  */
 internal object PlayReferrer {
-    private val executor by lazy {
-        Executors.newSingleThreadScheduledExecutor { r ->
-            Thread(r, "cizeylem-referrer").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }
-        }
+    private fun daemon(name: String) = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, name).apply { isDaemon = true; priority = Thread.MIN_PRIORITY }
     }
+
+    private val worker by lazy { daemon("cizeylem-referrer") }
+    private val timer by lazy { daemon("cizeylem-referrer-cb") }
 
     fun read(context: Context, callback: (Map<String, Any?>?) -> Unit) {
         val app = context.applicationContext ?: context
-        PlayReferrerReader(app, AttributionState(app.noBackupFilesDir), executor).read(callback)
+        // noBackupFilesDir çağıranın thread'inde ÇÖZÜLMEZ: ilk çağrıda dizin yaratır (disk G/Ç, ana thread'de StrictMode).
+        PlayReferrerReader(app, { app.noBackupFilesDir }, worker, timer).read(callback)
     }
 }
 
@@ -43,80 +48,84 @@ internal object PlayReferrer {
  *
  * Sözleşme: `read` callback'i TAM BİR KEZ çağırır. Değer ham alanlar haritasıdır (yorumlama yok, şifre çözme
  * sunucuda); referrer alınamadıysa `null` (Play yok/eski, bağlanma reddi, kopma, zaman aşımı, istisna).
- * Hiçbir yol istisna sızdırmaz.
+ * Hiçbir yol istisna sızdırmaz: tüm akış tek bir `finished` bayrağından geçer, hata `finish(null)` olur.
  *
- * Thread: `bindService` ve Binder çağrısı yalnız [executor]'da yapılır. `onServiceConnected` ana thread'de gelir,
- * orada hemen işçi thread'e geçilir; Binder çağrısı bloklayabilir.
+ * Thread: disk, `queryIntentServices`, `bindService` ve Binder çağrısı yalnız [worker]'da. `onServiceConnected`
+ * ana thread'de gelir, orada hemen işçiye geçilir. Zaman aşımı ve callback teslimi AYRI [timer] thread'indedir:
+ * `transact` takılırsa işçi tıkanır; zaman aşımı ve callback aynı thread'e konsaydı tam gerektiği anda çalışamazdı.
+ * Callback her yoldan (başarı, kopma, zaman aşımı, hata) hep [timer] thread'inde çağrılır; Görev 14 buna güvenebilir.
  *
  * İşaret ("okundu") yalnız referrer GERÇEKTEN alındığında yazılır. Geçici başarısızlıklar (kopma, bağlanma reddi)
  * sonraki açılışta yeniden denenir; Play'siz cihazda bu yalnız ucuz bir `queryIntentServices`'tir.
  */
 internal class PlayReferrerReader(
     context: Context,
-    private val state: AttributionState,
-    private val executor: ScheduledExecutorService,
+    private val noBackupDir: () -> File?,
+    private val worker: ScheduledExecutorService,
+    private val timer: ScheduledExecutorService,
     private val timeoutMs: Long = DEFAULT_TIMEOUT_MS,
 ) {
     private val context: Context = context.applicationContext ?: context
 
     fun read(callback: (Map<String, Any?>?) -> Unit) {
+        val call = Call(callback)
         try {
-            executor.execute {
+            worker.execute {
                 try {
-                    start(callback)
+                    call.start()
                 } catch (e: RuntimeException) {
-                            }
+                    call.finish(null)
+                }
             }
         } catch (e: RejectedExecutionException) {
-            callback(null)
+            call.finish(null)
         }
     }
 
-    private fun start(callback: (Map<String, Any?>?) -> Unit) {
-        if (state.isDone(KEY_DONE)) return callback(null)
+    /** Tek bir `read` çağrısının ömrü: bayrak, bağlantı ve zaman aşımı burada. */
+    private inner class Call(private val callback: (Map<String, Any?>?) -> Unit) : ServiceConnection {
+        private val finished = AtomicBoolean(false)
+        @Volatile private var bindAttempted = false
+        @Volatile private var timeout: ScheduledFuture<*>? = null
 
-        val intent = Intent(ACTION).setComponent(ComponentName(PLAY_PACKAGE, SERVICE_CLASS))
-        val pm = context.packageManager
-        val services = pm.queryIntentServices(intent, 0)
-        // Boş: Play yok (ya da paket görünürlüğü yok) => SERVICE_UNAVAILABLE; sessiz geç.
-        val info = services?.firstOrNull()?.serviceInfo ?: return callback(null)
-        // Paket ya da sürüm uyumsuz => FEATURE_NOT_SUPPORTED (kütüphanenin kontrolüyle aynı).
-        if (info.packageName != PLAY_PACKAGE || info.name == null || !playCompatible()) return callback(null)
+        fun start() {
+            val state = AttributionState(noBackupDir())
+            if (state.isDone(KEY_DONE)) return finish(null)
 
-        val session = Session(callback)
-        val bound = try {
-            context.bindService(Intent(intent), session, Context.BIND_AUTO_CREATE)
-        } catch (e: SecurityException) { // PERMISSION_ERROR
+            val intent = Intent(ACTION).setComponent(ComponentName(PLAY_PACKAGE, SERVICE_CLASS))
+            val services = context.packageManager.queryIntentServices(intent, 0)
+            // Boş: Play yok (ya da paket görünürlüğü yok) => SERVICE_UNAVAILABLE; sessiz geç.
+            val info = services?.firstOrNull()?.serviceInfo ?: return finish(null)
+            // Paket ya da sürüm uyumsuz => FEATURE_NOT_SUPPORTED (kütüphanenin kontrolüyle aynı).
+            if (info.packageName != PLAY_PACKAGE || info.name == null || !playCompatible()) return finish(null)
+
+            // Zaman aşımı bind'dan ÖNCE kurulur: bağlanma hiç sonuçlanmazsa (ölü süreç, null binding) asılı kalınmaz.
+            try {
+                timeout = timer.schedule({ finish(null) }, timeoutMs, TimeUnit.MILLISECONDS)
+            } catch (e: RejectedExecutionException) {
+                return finish(null)
+            }
+            // Bayrak bind'dan önce: onServiceDisconnected/onNullBinding araya girerse finish unbind'ı atlamasın.
+            bindAttempted = true
+            val bound = try {
+                context.bindService(Intent(intent), this, Context.BIND_AUTO_CREATE)
+            } catch (e: SecurityException) { // PERMISSION_ERROR
+                false
+            }
+            if (!bound) finish(null) // SERVICE_UNAVAILABLE: bağlanma engelli
+        }
+
+        @Suppress("DEPRECATION") // versionCode: kütüphane de int sürüm kodunu karşılaştırır (80837300 = Play 8.3.73).
+        private fun playCompatible(): Boolean = try {
+            context.packageManager.getPackageInfo(PLAY_PACKAGE, 0).versionCode >= MIN_PLAY_VERSION_CODE
+        } catch (e: Exception) { // NameNotFoundException dahil
             false
         }
-        if (!bound) {
-            session.finish(null) // SERVICE_UNAVAILABLE: bağlanma engelli
-            return
-        }
-        session.bound = true
-        // onServiceConnected/Disconnected hiç gelmezse (ölü süreç, null binding) callback asılı kalmasın.
-        try {
-            executor.schedule({ session.finish(null) }, timeoutMs, TimeUnit.MILLISECONDS)
-        } catch (e: RejectedExecutionException) {
-            session.finish(null)
-        }
-    }
-
-    @Suppress("DEPRECATION") // versionCode: kütüphane de int sürüm kodunu karşılaştırır (80837300 = Play 8.3.73).
-    private fun playCompatible(): Boolean = try {
-        context.packageManager.getPackageInfo(PLAY_PACKAGE, 0).versionCode >= MIN_PLAY_VERSION_CODE
-    } catch (e: Exception) { // NameNotFoundException dahil
-        false
-    }
-
-    private inner class Session(private val callback: (Map<String, Any?>?) -> Unit) : ServiceConnection {
-        private val finished = AtomicBoolean(false)
-        @Volatile var bound = false
 
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             // Ana thread'deyiz: Binder çağrısını işçiye devret.
             try {
-                executor.execute {
+                worker.execute {
                     try {
                         fetch(service)
                     } catch (e: RuntimeException) {
@@ -147,8 +156,10 @@ internal class PlayReferrerReader(
                 @Suppress("DEPRECATION") // tip belirsiz get(): değer olduğu gibi (ham) taşınır
                 if (reply.containsKey(key)) fields[key] = reply.get(key)
             }
+            // Zaman aşımı araya girip çoktan bitirdiyse işaret YAZILMAZ: callback null aldı, referrer kullanılmadı.
+            if (finished.get()) return
             // Yazılamayan işaret referrer'ı atmak için sebep değil: göndermek, bir kez daha okumaktan iyidir.
-            try { state.markDone(KEY_DONE) } catch (e: IOException) { }
+            try { AttributionState(noBackupDir()).markDone(KEY_DONE) } catch (e: IOException) { }
             finish(fields)
         }
 
@@ -174,10 +185,17 @@ internal class PlayReferrerReader(
 
         fun finish(result: Map<String, Any?>?) {
             if (!finished.compareAndSet(false, true)) return
-            if (bound) {
+            timeout?.cancel(false)
+            // Her zaman unbind dene (bound bayrağına güvenme); bağlı değilse atılan istisna yutulur.
+            if (bindAttempted) {
                 try { context.unbindService(this) } catch (e: RuntimeException) { }
             }
-            try { callback(result) } catch (e: RuntimeException) { }
+            // Teslim [timer]'da: işçi takılı olsa da callback gelir, thread her yolda aynıdır.
+            try {
+                timer.execute { try { callback(result) } catch (e: RuntimeException) { } }
+            } catch (e: RejectedExecutionException) {
+                try { callback(result) } catch (e: RuntimeException) { }
+            }
         }
     }
 

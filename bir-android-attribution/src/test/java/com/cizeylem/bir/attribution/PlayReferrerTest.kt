@@ -43,6 +43,7 @@ class PlayReferrerTest {
 
     private lateinit var dir: File
     private lateinit var executor: ScheduledExecutorService
+    private lateinit var timer: ScheduledExecutorService
     private lateinit var ctx: FakeContext
 
     /** Context: bindService'i yakalar, gerçek PackageManager'ı (Robolectric) kullanır. */
@@ -54,6 +55,8 @@ class PlayReferrerTest {
         var conn: ServiceConnection? = null
         var bindThread: Thread? = null
         var unbound = 0
+        var pmThrows: RuntimeException? = null
+        override fun getPackageManager(): android.content.pm.PackageManager { pmThrows?.let { throw it }; return super.getPackageManager() }
         override fun getApplicationContext(): Context = this
         override fun bindService(service: Intent, c: ServiceConnection, flags: Int): Boolean {
             bindThread = Thread.currentThread()
@@ -67,11 +70,13 @@ class PlayReferrerTest {
     @Before fun setUp() {
         dir = File.createTempFile("playref", "").apply { delete(); mkdirs() }
         executor = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "test-worker").apply { isDaemon = true } }
+        timer = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "test-timer").apply { isDaemon = true } }
         ctx = FakeContext(RuntimeEnvironment.getApplication())
     }
 
     @After fun tearDown() {
         executor.shutdownNow()
+        timer.shutdownNow()
         dir.deleteRecursively()
     }
 
@@ -83,18 +88,20 @@ class PlayReferrerTest {
         pm.installPackage(PackageInfo().apply { packageName = "com.android.vending"; this.versionCode = versionCode })
     }
 
-    private fun reader(timeoutMs: Long = 15_000) = PlayReferrerReader(ctx, AttributionState(dir), executor, timeoutMs)
+    private fun reader(timeoutMs: Long = 15_000, noBackup: () -> File? = { dir }) =
+        PlayReferrerReader(ctx, noBackup, executor, timer, timeoutMs)
 
     private class Result {
         val latch = CountDownLatch(1)
         val value = AtomicReference<Map<String, Any?>?>()
+        val cbThread = AtomicReference<Thread>()
         val calls = java.util.concurrent.atomic.AtomicInteger()
-        val cb: (Map<String, Any?>?) -> Unit = { v -> value.set(v); calls.incrementAndGet(); latch.countDown() }
+        val cb: (Map<String, Any?>?) -> Unit = { v -> cbThread.set(Thread.currentThread()); value.set(v); calls.incrementAndGet(); latch.countDown() }
         fun await(): Map<String, Any?>? { assertTrue("callback gelmedi", latch.await(5, TimeUnit.SECONDS)); return value.get() }
     }
 
     /** Elle kurulan wire protokolünü (AIDL ile aynı) doğrulayan sahte Play servisi: descriptor, kod 1 ve istek Bundle'ı denetlenir. */
-    private inner class FakeService(val reply: Bundle?, val throwRemote: Boolean = false) : Binder() {
+    private inner class FakeService(val reply: Bundle?, val throwRemote: Boolean = false, val block: CountDownLatch? = null) : Binder() {
         var code = -1
         var requestPackage: String? = null
         var transactThread: Thread? = null
@@ -102,6 +109,7 @@ class PlayReferrerTest {
             code = c
             transactThread = Thread.currentThread()
             data.enforceInterface(descriptor)
+            block?.await(10, TimeUnit.SECONDS)
             if (data.readInt() != 0) requestPackage = Bundle.CREATOR.createFromParcel(data).getString("package_name")
             if (throwRemote) throw RuntimeException("servis çöktü")
             replyP!!.writeNoException()
@@ -296,5 +304,79 @@ class PlayReferrerTest {
         ctx.conn!!.onServiceConnected(ComponentName("a", "b"), FakeService(fullBundle()))
         Thread.sleep(200)
         assertEquals(1, r.calls.get())
+    }
+
+    @Test fun `noBackupDir cozumlemesi cagiranin thread'inde degil iscide yapilir`() {
+        val resolvedOn = AtomicReference<Thread>()
+        val r = Result()
+        reader(noBackup = { resolvedOn.set(Thread.currentThread()); dir }).read(r.cb)
+        r.await()
+        assertEquals("test-worker", resolvedOn.get().name)
+    }
+
+    @Test fun `noBackupDir cozumlemesi istisna atarsa callback yine null ile gelir`() {
+        val r = Result()
+        reader(noBackup = { throw IllegalStateException("depo yok") }).read(r.cb)
+        assertNull(r.await())
+        assertEquals(1, r.calls.get())
+    }
+
+    @Test fun `PackageManager istisna atarsa callback yine null ile gelir`() {
+        ctx.pmThrows = IllegalStateException("binder öldü") // DeadObject/IllegalState benzeri
+        val r = Result()
+        reader().read(r.cb)
+        assertNull(r.await())
+        assertNull(ctx.conn)
+    }
+
+    @Test fun `bindService SecurityException disi istisna da null verir ve unbind denenir`() {
+        installPlay()
+        ctx.bindThrows = IllegalStateException("beklenmedik")
+        val r = Result()
+        reader().read(r.cb)
+        assertNull(r.await())
+        assertEquals(1, ctx.unbound)
+    }
+
+    @Test fun `onNullBinding null verir ve baglantiyi birakir`() {
+        installPlay()
+        val r = Result()
+        reader().read(r.cb)
+        waitBound()
+        ctx.conn!!.onNullBinding(ComponentName("a", "b"))
+        assertNull(r.await())
+        assertEquals(1, ctx.unbound)
+    }
+
+    @Test fun `transact takilirsa zaman asimi yine de callback'i null ile getirir ve isaret yazilmaz`() {
+        installPlay()
+        val gate = CountDownLatch(1)
+        val r = Result()
+        reader(timeoutMs = 150).read(r.cb)
+        waitBound()
+        ctx.conn!!.onServiceConnected(ComponentName("a", "b"), FakeService(fullBundle(), block = gate))
+        assertNull(r.await()) // işçi gate'te bloklu; teslim ayrı thread'den gelmeli
+        assertEquals(1, ctx.unbound)
+        gate.countDown()
+        Thread.sleep(300) // geç dönen referrer artık ne callback'i tekrar çağırır ne işaret yazar
+        assertEquals(1, r.calls.get())
+        assertFalse(AttributionState(dir).isDone("play_referrer"))
+    }
+
+    @Test fun `callback her yolda ayni thread'de cagrilir ve bu ana thread degildir`() {
+        installPlay()
+        val ok = Result()
+        reader().read(ok.cb)
+        waitBound()
+        ctx.conn!!.onServiceConnected(ComponentName("a", "b"), FakeService(fullBundle()))
+        ok.await()
+        ctx.conn = null
+        val dc = Result()
+        reader(noBackup = { File(dir, "yok") }).read(dc.cb)
+        waitBound()
+        ctx.conn!!.onServiceDisconnected(ComponentName("a", "b"))
+        dc.await()
+        assertEquals("test-timer", ok.cbThread.get().name)
+        assertEquals("test-timer", dc.cbThread.get().name)
     }
 }

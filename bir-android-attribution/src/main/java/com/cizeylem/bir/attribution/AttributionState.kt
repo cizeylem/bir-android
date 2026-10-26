@@ -15,16 +15,20 @@ import org.json.JSONObject
 internal class AttributionState(private val noBackupDir: File?) {
     private val file: File? = noBackupDir?.let { File(File(it, "cizeylem"), "attr_state") }
 
-    @Synchronized
-    fun isDone(key: String): Boolean = load().optBoolean(key, false)
+    fun isDone(key: String): Boolean = synchronized(LOCK) { load().optBoolean(key, false) }
 
     /** Mevcut diğer işaretleri koruyarak ekler (Görev 13 aynı dosyayı kullanır). Başarısızlıkta IOException. */
-    @Synchronized
-    fun markDone(key: String) {
+    fun markDone(key: String): Unit = synchronized(LOCK) {
         val target = file ?: throw IOException("noBackupDir yok")
         val json = load()
         try { json.put(key, true) } catch (e: JSONException) { throw IOException(e) }
         writeAtomic(target, json.toString().toByteArray(Charsets.UTF_8))
+    }
+
+    private companion object {
+        // Süreç geneli kilit: her okuma yeni örnek yaratır, örnek kilidi okuma-değiştirme-yazmayı korumaz
+        // (Görev 13 aynı dosyaya yazar; paralel markDone bir işareti kaybedebilirdi).
+        val LOCK = Any()
     }
 
     private fun load(): JSONObject {

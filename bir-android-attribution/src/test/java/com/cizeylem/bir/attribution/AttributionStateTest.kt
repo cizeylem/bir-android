@@ -53,4 +53,13 @@ class AttributionStateTest {
         s.markDone("play_referrer")
         assertEquals(true, AttributionState(dir).isDone("play_referrer"))
     }
+
+    @Test fun `paralel markDone farkli orneklerden hicbir isareti kaybetmez`() {
+        val n = 100
+        val t1 = Thread { for (i in 0 until n) AttributionState(dir).markDone("a$i") }
+        val t2 = Thread { for (i in 0 until n) AttributionState(dir).markDone("b$i") }
+        t1.start(); t2.start(); t1.join(); t2.join()
+        val s = AttributionState(dir)
+        for (i in 0 until n) { assertTrue("a$i", s.isDone("a$i")); assertTrue("b$i", s.isDone("b$i")) }
+    }
 }
