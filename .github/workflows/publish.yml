@@ -35,6 +35,27 @@ jobs:
             exit 1
           fi
 
+      # Sessiz atlamayı kapat: sır adı yanlış yazılmış ya da env satırı silinmişse imzasız/kimliksiz yayın
+      # denenmez, iş burada anlamlı mesajla düşer. (Gradle'daki imza koşulu yerel imzasız doğrulama içindir.)
+      - name: Yayın sırlarının varlığını doğrula
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          SIGNING_IN_MEMORY_KEY: ${{ secrets.SIGNING_IN_MEMORY_KEY }}
+          SIGNING_IN_MEMORY_KEY_PASSWORD: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}
+        run: |
+          missing=0
+          for name in MAVEN_CENTRAL_USERNAME MAVEN_CENTRAL_PASSWORD SIGNING_IN_MEMORY_KEY SIGNING_IN_MEMORY_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Repo secret '$name' boş ya da tanımsız." >&2
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::İmzalama anahtarı ya da Central kimliği eksik; imzasız yayın yapılmayacak." >&2
+            exit 1
+          fi
+
       - name: Testler ve AAR boyut sınırı
         run: |
           ./gradlew --no-daemon :bir-android:testDebugUnitTest :bir-android-attribution:testDebugUnitTest

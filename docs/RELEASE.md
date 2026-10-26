@@ -71,6 +71,7 @@ ORG_GRADLE_PROJECT_signingInMemoryKeyPassword='...' \
 
 ## Notlar
 
+- Yerelde imzasız doğrulama bilinçlidir. CI'da imzasız yayın **mümkün değildir**: yayın adımından önceki ön kontrol, dört secret'tan biri boşsa işi anlamlı bir hata mesajıyla düşürür.
 - Entegrasyon iki modülü de ekler: `bir-android-attribution` çekirdeğe `implementation` ile bağlıdır (genel yüzeyinde
   çekirdek tipi yok, `api` gerekmez); tüketici zaten `Cizeylem.initialize` çağırdığı için çekirdeği açıkça ekler.
 - **İmzalı yol (`signAllPublications()`) ve `publishToMavenCentral` gerçek ortamda hiç çalıştırılmadı** (GPG anahtarı
