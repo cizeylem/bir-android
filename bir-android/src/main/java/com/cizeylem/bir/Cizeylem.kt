@@ -133,8 +133,17 @@ object Cizeylem : AttributionSink {
     fun stats(): Stats = core?.stats() ?: Stats(0, 0, 0, false)
 
     // --- AttributionSink (attribution modülünün kapısı) -------------------------------------------
+    //
+    // BİLİNÇLİ KARAR (0.1.0): `Cizeylem` bu arayüzü uyguladığı için aşağıdaki üç üye genel yüzeyde
+    // görünür — Kotlin'de bir arayüz uygulaması `internal` olamaz. Alternatifler (ayrı bir köprü nesnesi,
+    // yansımayla bağlama) ya genel yüzeyi başka yerden büyütüyor ya da ProGuard'da kırılıyordu; rıza
+    // açısından bir delik yok, çünkü üçü de çekirdeğin rıza kapısından geçer. Bu yüzden olduğu gibi
+    // bırakıldı ve BELGELENDİ: README'deki genel API listesinde yer almazlar.
 
     /**
+     * SDK'NIN İÇ KULLANIMI İÇİNDİR, KARARLI API DEĞİLDİR. Yalnız `bir-android-attribution` modülü çağırır;
+     * uygulama kodundan çağrılması desteklenmez ve ikinci bir uyarı olmadan değişebilir.
+     *
      * Attribution modülü işini buradan başlatır: iş çekirdeğin thread'inde, rıza okunduktan sonra çalışır.
      * `initialize` çağrılmamışsa HİÇ çalışmaz — gidecek yer yokken sinyal toplamak, "okundu" işaretini
      * boşa yakardı.
@@ -143,14 +152,21 @@ object Cizeylem : AttributionSink {
         core?.withConsent(task)
     }
 
-    /** Alanlar `cz_attribution` event'i olarak normal kuyruğa girer (kimlikli, `/v1/batch`). */
+    /**
+     * SDK'NIN İÇ KULLANIMI İÇİNDİR, KARARLI API DEĞİLDİR (bkz. yukarıdaki not).
+     * Alanlar `cz_attribution` event'i olarak normal kuyruğa girer (kimlikli, `/v1/batch`).
+     */
     override fun sendIdentified(fields: Map<String, Any?>, onDelivered: (Boolean) -> Unit) {
         // Çekirdek yoksa devir OLMADI: çağıran işareti yazmamalı, sinyal sonraki açılışta yeniden okunmalı.
         val c = core ?: return onDelivered(false)
         c.sendAttributionIdentified(fields, onDelivered)
     }
 
-    /** Alanlar `/v1/attribution/anon`'a gider; gövdede `device_id`/`user_id` bulunmaz. */
+    /**
+     * SDK'NIN İÇ KULLANIMI İÇİNDİR, KARARLI API DEĞİLDİR (bkz. yukarıdaki not).
+     * Alanlar `/v1/attribution/anon`'a gider; gövdede hiçbir kimlik alanı (`device_id`/`user_id`/
+     * `distinct_id`/`gaid`) bulunmaz.
+     */
     override fun sendAnonymous(fields: Map<String, Any?>, onDelivered: (Boolean) -> Unit) {
         val c = core ?: return onDelivered(false)
         c.sendAttributionAnonymous(fields, onDelivered)

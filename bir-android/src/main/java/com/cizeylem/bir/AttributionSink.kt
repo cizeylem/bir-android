@@ -26,8 +26,15 @@ interface AttributionSink {
     fun sendIdentified(fields: Map<String, Any?>, onDelivered: (Boolean) -> Unit)
 
     /**
-     * Kimliksiz gönderim (`/v1/attribution/anon`). Bu yolda kuyruk YOKTUR (rızasız kalıcı iz bırakılamaz),
-     * bu yüzden [onDelivered] yalnız sunucudan **2xx** alındığında `true` olur.
+     * Kimliksiz gönderim (`/v1/attribution/anon`). Bu yolda kuyruk YOKTUR, bu yüzden [onDelivered] yalnız
+     * sunucudan **2xx** alındığında `true` olur.
+     *
+     * KALICI İZ KURALININ TAM HÂLİ: çekirdek rızasız hiçbir iz bırakmaz — ne dizin, ne kuyruk, ne kimlik.
+     * Attribution modülü tek bir istisna yazar: `<noBackupDir>/cizeylem/attr_state`, içinde sinyal başına
+     * tek bir boolean ("bu sinyal bir kez okundu ve teslim edildi"). Kimlik değildir, kullanıcıya ait hiçbir
+     * değer taşımaz ve kimlikle ilişkilendirilemez. Gerekçesi: işaret yazılmazsa referrer her açılışta
+     * yeniden okunup aynı kimliksiz sinyal yeniden gönderilir — tekrarlanan bir sinyal, tek bir booleandan
+     * daha fazla iz bırakır. Ayrıntı: `docs/AS-BUILT.md`.
      */
     fun sendAnonymous(fields: Map<String, Any?>, onDelivered: (Boolean) -> Unit)
 }

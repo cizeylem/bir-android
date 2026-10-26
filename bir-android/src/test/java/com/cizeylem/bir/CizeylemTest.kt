@@ -218,7 +218,11 @@ class CizeylemTest {
         assertEquals(1, sent.size)
     }
 
-    @Test fun `riza yokken init-track-flush hicbir dosya olusturmaz`() {
+    /**
+     * Kapsam ÇEKİRDEKTİR: `Cizeylem` rızasız hiçbir dosya/dizin yaratmaz. Attribution modülünün `attr_state`
+     * işareti bu iddiaya dahil değildir (ayrı modül, ayrı istisna — bkz. `AttributionSink.sendAnonymous`).
+     */
+    @Test fun `riza yokken cekirdek init-track-flush hicbir dosya olusturmaz`() {
         init()
         Cizeylem.track("a")
         Cizeylem.identify("u")
@@ -226,7 +230,7 @@ class CizeylemTest {
         Cizeylem.flush()
         sch.run()
         sch.tick()
-        assertFalse("rıza yokken cizeylem dizini hiç oluşmamalı", dir().exists())
+        assertFalse("rıza yokken çekirdek cizeylem dizinini hiç oluşturmamalı", dir().exists())
         assertTrue(sent.isEmpty())
         assertNull(Cizeylem.getDistinctId())
     }

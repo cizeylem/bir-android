@@ -288,7 +288,9 @@ internal class Core(
     }
 
     /**
-     * Kuyruk YOK: rızasız kalıcı iz bırakamayız (SPEC §5), bu yüzden tek deneme ve diskte bekleyen kopya yok.
+     * Kuyruk YOK: çekirdek rızasız kalıcı iz bırakmaz (SPEC §5), bu yüzden tek deneme ve diskte bekleyen
+     * kopya yok. (Tek istisna çekirdeğin dışındadır: attribution modülü `attr_state` içine sinyal başına tek
+     * bir "okundu" booleanı yazar — kimlik değildir; bkz. [com.cizeylem.bir.AttributionSink.sendAnonymous].)
      *
      * KALICI DEVİR yalnız **2xx**'tir: başka her sonuçta (ağ hatası, 4xx, 5xx) `false` bildirilir, modül
      * işareti yazmaz ve sinyal bir sonraki açılışta yeniden okunup yeniden gönderilir. Tekrar gönderim,
