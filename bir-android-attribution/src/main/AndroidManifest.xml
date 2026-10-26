@@ -11,6 +11,10 @@
     -->
     <queries>
         <package android:name="com.android.vending" />
+        <!-- GAID: bindService hedefi com.google.android.gms. Google'ın kendi ads-identifier AAR'ı <queries>
+             eklemiyor (belki GMS sistem tarafında özel muameleli), ama eksikse GAID SESSİZCE hiç okunmaz;
+             fazlalığın maliyeti yok, eksiğin maliyeti sinyal kaybı. Araştırmada "tahmin" işaretli. -->
+        <package android:name="com.google.android.gms" />
         <package android:name="com.facebook.katana" />
         <package android:name="com.instagram.android" />
         <package android:name="com.facebook.lite" />
