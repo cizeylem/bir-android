@@ -1,6 +1,14 @@
 [versions]
 agp = "8.13.2"
-kotlin = "2.4.21"
+# YÜKSELTMEDEN ÖNCE OKU: bu sürüm BİLEREK geride tutuluyor.
+# Kotlin metadata'sı ileriye dönük uyumlu DEĞİLDİR: X ile derlenmiş bir kütüphaneyi X'ten
+# eski bir derleyici okuyamaz ("binary version of its metadata is X, expected version is Y").
+# Yani buradaki sürüm, SDK'yı kullanabilecek uygulamaların ALT SINIRINI belirler — bir
+# kütüphanenin müşterisinden daha yeni derleyici dayatması yanlıştır.
+# 2.4.21'di; ilk müşteri uygulaması (Kotlin 2.1.20) SDK'yı HİÇ derleyemedi. Ölçüldü: 2.1.20'ye
+# inmek 397 testin hiçbirini bozmuyor, 0 uyarı — SDK hiçbir 2.2+ dil özelliği kullanmıyor.
+# Yükseltmek, o sürümün altındaki her uygulamayı SESSİZCE dışarıda bırakır.
+kotlin = "2.1.20"
 robolectric = "4.17"
 junit = "4.13.2"
 androidx-test-runner = "1.6.2"
