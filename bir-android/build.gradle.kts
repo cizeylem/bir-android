@@ -1,4 +1,5 @@
 import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
+import com.vanniktech.maven.publish.DeploymentValidation
 
 plugins {
     alias(libs.plugins.android.library)
@@ -63,7 +64,10 @@ version = providers.gradleProperty("VERSION_NAME").get()
 
 mavenPublishing {
     configure(AndroidSingleVariantLibrary(variant = "release", sourcesJar = true, publishJavadocJar = true))
-    publishToMavenCentral()
+    // Otomatik release: yükleme sonrası Portal'da elle "Publish" gerekmez. İki modül tek dağıtımda
+    // (plugin'in paylaşılan build servisi) yayınlanır. PUBLISHED: görev, sürüm Central'da yayınlanana
+    // kadar bekler; böylece publish.yml'deki GitHub Release yalnız gerçekten yayınlanmış sürüm için açılır.
+    publishToMavenCentral(automaticRelease = true, validateDeployment = DeploymentValidation.PUBLISHED)
     // İmza yalnız anahtar verilmişse (CI: ORG_GRADLE_PROJECT_signingInMemoryKey). Yerelde anahtar yoktur;
     // publishToMavenLocal imzasız geçer. Central imzasız yüklemeyi zaten reddeder.
     if (providers.gradleProperty("signingInMemoryKey").isPresent) {

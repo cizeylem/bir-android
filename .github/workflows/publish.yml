@@ -1,10 +1,14 @@
-# Yayın: `android-v*` tag'i push edilince Maven Central Portal'a yükler.
+# Yayın: `android-v*` tag'i push edilince Maven Central'a yükler ve OTOMATİK yayınlar (Portal'da elle
+# "Publish" yok), ardından aynı tag için GitHub Release açar.
 # Sırlar yalnız repo secrets'tan okunur; koda yazılmaz. Ayrıntı: docs/RELEASE.md
 #
 # ACTION'LAR TAM COMMIT SHA'SINA SABİTLİDİR: bu iş GPG özel anahtarını ve Central kimliğini env'e
 # koyuyor, yani bir action'ın hareketli sürüm etiketi ele geçirilirse sırlar sızar. SHA sabiti etiketin
 # gösterdiği yer değişse bile aynı kodu çalıştırır. Sürüm yükseltmesi = SHA'yı ve yanındaki sürüm
 # yorumunu birlikte güncellemek. (ci.yml sır kullanmadığı için orada etiket yeterlidir.)
+#
+# İZİNLER AYRIDIR: Central sırlarını taşıyan `publish` işi yalnız `contents: read` ile koşar. Depoya yazma
+# (`contents: write`) yalnız `github-release` işindedir; o iş hiçbir sır görmez ve kod checkout etmez.
 name: Maven Central yayını
 
 on:
@@ -18,7 +22,10 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Görev, Central dağıtımı PUBLISHED olana kadar bekler (genelde 10-30 dk; plugin'in kendi zaman aşımı 60 dk).
+    timeout-minutes: 90
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -66,10 +73,40 @@ jobs:
           ./gradlew --no-daemon :bir-android:testDebugUnitTest :bir-android-attribution:testDebugUnitTest
           ./scripts/measure-aar.sh
 
-      - name: Central Portal'a yayınla
-        run: ./gradlew --no-daemon :bir-android:publishToMavenCentral :bir-android-attribution:publishToMavenCentral
+      # publishAndReleaseToMavenCentral: yükler, dağıtımı otomatik yayınlar ve PUBLISHED olana kadar bekler
+      # (build.gradle.kts: automaticRelease = true, DeploymentValidation.PUBLISHED). İki modül tek dağıtımdır.
+      - name: Maven Central'a yükle ve yayınla
+        run: ./gradlew --no-daemon :bir-android:publishAndReleaseToMavenCentral :bir-android-attribution:publishAndReleaseToMavenCentral
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_IN_MEMORY_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}
+
+  # Yalnız yayın başarılıysa çalışır. Sır görmez, checkout etmez; tek yetkisi Release oluşturmak.
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: GitHub Release oluştur
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Yeniden çalıştırmada (re-run) var olan Release'i bozma.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release '$TAG' zaten var; atlanıyor."
+            exit 0
+          fi
+          VERSION="${TAG#android-v}"
+          args=(--verify-tag --generate-notes --title "bir-android $VERSION")
+          # Ön sürüm (0.2.0-rc.1 gibi) prerelease olarak işaretlenir. Bakılan SÜRÜM kısmıdır: tag önekinin
+          # kendisi ('android-v') de '-' içerdiğinden tag'e bakmak her sürümü prerelease yapardı.
+          case "$VERSION" in
+            *-*) args+=(--prerelease) ;;
+          esac
+          gh release create "$TAG" "${args[@]}"
