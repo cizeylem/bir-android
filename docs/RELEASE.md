@@ -148,10 +148,10 @@ Kaynak ve SCM bağlantısı (`https://github.com/cizeylem/bir-android`) POM'da y
 erişebilmesi için depo ilk yayından önce public olmalıdır (GitHub → Settings → General → Danger Zone →
 Change visibility). Public yapmadan önce geçmişte sır olmadığından emin olun.
 
-**Actions faturalandırması:** Ekim 2026 itibarıyla bu depodaki CI işleri hiç başlamadı ("recent account
-payments have failed or your spending limit needs to be increased"). Aynı engel `publish.yml`'i de durdurur.
-Public depolarda standart GitHub runner'ları ücretsizdir; depo private kalacaksa önce Billing & plans
-düzeltilmelidir. Tag atmadan önce herhangi bir push'ta `CI` iş akışının gerçekten koştuğunu görün.
+**Actions:** `publish.yml` ancak Actions koşabiliyorsa çalışır. Private depoda dakikalar faturalanır; ödeme
+ya da harcama limiti sorunu varsa işler "recent account payments have failed" ile hiç başlamaz (Ekim 2026'da
+böyle oldu, sonra çözüldü). Public depolarda standart runner'lar ücretsizdir. Tag atmadan önce `main`'de son
+`CI` koşusunun gerçekten koşup yeşil bittiğini görün: `publish.yml` aynı testleri tekrar koşar.
 
 ### 6. İlk tag
 
