@@ -10,15 +10,33 @@
 | `bir-android` | Çekirdek: `track`, `identify`, kullanıcı özellikleri, oturum, kuyruk, rıza, deep link |
 | `bir-android-attribution` | Attribution (isteğe bağlı): Play/Meta install referrer, `install_source`, GAID |
 
-## Gradle
+## Kurulum (Gradle)
+
+Paketler Maven Central'dadır. Gereksinim: `minSdk 21` veya üstü.
+
+`settings.gradle.kts` (yeni projelerde zaten vardır):
+
+```kotlin
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+```
+
+Uygulama modülünün `build.gradle.kts`'i:
 
 ```kotlin
 dependencies {
     implementation("com.cizeylem:bir-android:0.1.0")
-    // Attribution isteniyorsa (çekirdeğe bağımlıdır, tek başına kullanılmaz):
+    // İsteğe bağlı: attribution. Çekirdeğe bağımlıdır, tek başına kullanılmaz; ikisi aynı sürümle eklenir.
     implementation("com.cizeylem:bir-android-attribution:0.1.0")
 }
 ```
+
+Güncel sürüm: [Maven Central](https://central.sonatype.com/artifact/com.cizeylem/bir-android) ve
+[GitHub Releases](https://github.com/cizeylem/bir-android/releases) (`android-v<sürüm>` tag'leri).
 
 ## En küçük kurulum
 
@@ -42,6 +60,10 @@ Cizeylem.identify("kullanici-123")
 ```
 
 Java'dan aynısı: `Cizeylem.initialize(this, new Configuration("ck_w_..."));`
+
+Attribution modülü eklendiyse, `Cizeylem.initialize`'dan **sonra** `Attribution.initialize(this)`
+(Meta install referrer için `Attribution.initialize(this, "<Facebook App ID>")`); ayrıntı:
+[`bir-android-attribution/README.md`](bir-android-attribution/README.md).
 
 Tüm çağrılar çağıran thread'de **anında** döner; disk, Binder ve ağ işi SDK'nın kendi thread'ine
 gider. `initialize` çağrılmadan yapılan çağrılar sessizce yok sayılır — analitik, uygulamanızı
